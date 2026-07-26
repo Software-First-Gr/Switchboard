@@ -1,0 +1,14 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.DotSettings.user
+
+# OS
+.DS_Store
