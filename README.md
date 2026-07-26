@@ -13,7 +13,7 @@ Switchboard implements the request/response, notification, and pipeline-behavior
 dotnet add package Switchboard
 ```
 
-Targets `net8.0` and `net10.0`.
+Targets `net10.0`.
 
 ## Quick start
 
