@@ -9,7 +9,12 @@ namespace Switchboard;
 public sealed class SwitchboardConfiguration
 {
     internal List<Assembly> Assemblies { get; } = new();
-    internal List<Type> OpenBehaviors { get; } = new();
+
+    /// <summary>
+    /// Behaviors in the order they were added, open and closed generics interleaved.
+    /// Registration order is preserved so the first one added always runs outermost.
+    /// </summary>
+    internal List<Type> Behaviors { get; } = new();
 
     /// <summary>Scans the assembly containing <typeparamref name="T"/> for handlers.</summary>
     public SwitchboardConfiguration RegisterServicesFromAssemblyContaining<T>()
@@ -47,7 +52,40 @@ public sealed class SwitchboardConfiguration
                 nameof(openBehaviorType));
         }
 
-        OpenBehaviors.Add(openBehaviorType);
+        Behaviors.Add(openBehaviorType);
         return this;
     }
+
+    /// <summary>
+    /// Registers a closed pipeline behavior that applies to one specific request/response pair,
+    /// e.g. <c>AddBehavior&lt;AuditOrderBehavior&gt;()</c> for <c>IPipelineBehavior&lt;PlaceOrder, OrderId&gt;</c>.
+    /// Order matters: the first behavior added runs outermost, counting open and closed behaviors together.
+    /// </summary>
+    /// <typeparam name="TBehavior">A concrete type implementing one or more closed <see cref="IPipelineBehavior{TRequest,TResponse}"/> interfaces.</typeparam>
+    public SwitchboardConfiguration AddBehavior<TBehavior>()
+        => AddBehavior(typeof(TBehavior));
+
+    /// <summary>
+    /// Registers a closed pipeline behavior that applies to one specific request/response pair.
+    /// Order matters: the first behavior added runs outermost, counting open and closed behaviors together.
+    /// </summary>
+    public SwitchboardConfiguration AddBehavior(Type behaviorType)
+    {
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        if (behaviorType.IsGenericTypeDefinition || !ClosedBehaviorInterfaces(behaviorType).Any())
+        {
+            throw new ArgumentException(
+                $"{behaviorType} must be a concrete type implementing a closed IPipelineBehavior<,>. " +
+                "Use AddOpenBehavior for open generic behaviors.",
+                nameof(behaviorType));
+        }
+
+        Behaviors.Add(behaviorType);
+        return this;
+    }
+
+    internal static IEnumerable<Type> ClosedBehaviorInterfaces(Type behaviorType)
+        => behaviorType.GetInterfaces().Where(
+            i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
 }

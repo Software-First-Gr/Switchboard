@@ -65,6 +65,21 @@ public sealed class SecondBehavior<TRequest, TResponse> : IPipelineBehavior<TReq
     }
 }
 
+public sealed class ClosedTrackedBehavior : IPipelineBehavior<Tracked, string>
+{
+    private readonly Recorder _recorder;
+
+    public ClosedTrackedBehavior(Recorder recorder) => _recorder = recorder;
+
+    public async Task<string> Handle(Tracked request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
+    {
+        _recorder.Add("closed:before");
+        var response = await next(cancellationToken);
+        _recorder.Add("closed:after");
+        return response;
+    }
+}
+
 public sealed class ShortCircuitBehavior : IPipelineBehavior<Tracked, string>
 {
     public Task<string> Handle(Tracked request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
@@ -136,6 +151,63 @@ public sealed class PipelineBehaviorTests
         var response = await sender.Send(new Tracked(ShortCircuit: true));
 
         Assert.Equal("short-circuited", response);
+        Assert.Equal("", recorder.Joined);
+    }
+
+    [Fact]
+    public async Task AddBehavior_registers_a_closed_behavior_and_it_runs()
+    {
+        await using var provider = new ServiceCollection()
+            .AddSingleton<Recorder>()
+            .AddSwitchboard(cfg => cfg
+                .RegisterServicesFromAssemblyContaining<PipelineBehaviorTests>()
+                .AddBehavior<ClosedTrackedBehavior>())
+            .BuildServiceProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        var recorder = provider.GetRequiredService<Recorder>();
+
+        var response = await sender.Send(new Tracked());
+
+        Assert.Equal("handled", response);
+        Assert.Equal("closed:before|handler|closed:after", recorder.Joined);
+    }
+
+    [Fact]
+    public async Task Open_and_closed_behaviors_share_one_ordering()
+    {
+        await using var provider = new ServiceCollection()
+            .AddSingleton<Recorder>()
+            .AddSwitchboard(cfg => cfg
+                .RegisterServicesFromAssemblyContaining<PipelineBehaviorTests>()
+                .AddOpenBehavior(typeof(FirstBehavior<,>))
+                .AddBehavior<ClosedTrackedBehavior>()
+                .AddOpenBehavior(typeof(SecondBehavior<,>)))
+            .BuildServiceProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        var recorder = provider.GetRequiredService<Recorder>();
+
+        await sender.Send(new Tracked());
+
+        Assert.Equal(
+            "first:before|closed:before|second:before|handler|second:after|closed:after|first:after",
+            recorder.Joined);
+    }
+
+    [Fact]
+    public async Task Closed_behavior_does_not_apply_to_other_request_types()
+    {
+        await using var provider = new ServiceCollection()
+            .AddSingleton<Recorder>()
+            .AddSwitchboard(cfg => cfg
+                .RegisterServicesFromAssemblyContaining<PipelineBehaviorTests>()
+                .AddBehavior<ClosedTrackedBehavior>())
+            .BuildServiceProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        var recorder = provider.GetRequiredService<Recorder>();
+
+        var response = await sender.Send(new Ping("ping"));
+
+        Assert.Equal("ping pong", response);
         Assert.Equal("", recorder.Joined);
     }
 

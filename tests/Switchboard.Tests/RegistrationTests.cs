@@ -97,6 +97,19 @@ public sealed class RegistrationTests
     }
 
     [Fact]
+    public void AddBehavior_rejects_open_generics_and_non_behaviors()
+    {
+        var services = new ServiceCollection();
+
+        Assert.Throws<ArgumentException>(
+            () => services.AddSwitchboard(cfg => cfg.AddBehavior(typeof(FirstBehavior<,>))));
+        Assert.Throws<ArgumentException>(
+            () => services.AddSwitchboard(cfg => cfg.AddBehavior(typeof(string))));
+        Assert.Throws<ArgumentNullException>(
+            () => services.AddSwitchboard(cfg => cfg.AddBehavior(null!)));
+    }
+
+    [Fact]
     public void AddSwitchboard_rejects_null_arguments()
     {
         var services = new ServiceCollection();

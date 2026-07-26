@@ -1,6 +1,6 @@
 # Switchboard
 
-[![NuGet](https://img.shields.io/nuget/v/Switchboard.svg)](https://www.nuget.org/packages/Switchboard)
+[![NuGet](https://img.shields.io/nuget/v/SoftwareFirst.Switchboard.svg)](https://www.nuget.org/packages/SoftwareFirst.Switchboard)
 [![CI](https://github.com/Software-First-Gr/Switchboard/actions/workflows/ci.yml/badge.svg)](https://github.com/Software-First-Gr/Switchboard/actions/workflows/ci.yml)
 
 **A lightweight, MediatR-compatible mediator for .NET.**
@@ -10,10 +10,10 @@ Switchboard implements the request/response, notification, and pipeline-behavior
 ## Install
 
 ```bash
-dotnet add package Switchboard
+dotnet add package SoftwareFirst.Switchboard
 ```
 
-Targets `net10.0`.
+Targets `net10.0`. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
 
 ## Quick start
 
@@ -73,7 +73,17 @@ services.AddSwitchboard(cfg => cfg
     .AddOpenBehavior(typeof(ValidationBehaviour<,>))); // runs inside logging
 ```
 
-Closed behaviors for a single request type can be registered directly:
+A behavior that applies to one specific request/response pair goes in with `AddBehavior`:
+
+```csharp
+services.AddSwitchboard(cfg => cfg
+    .RegisterServicesFromAssemblyContaining<GetOrderHandler>()
+    .AddOpenBehavior(typeof(LoggingBehaviour<,>))   // outermost
+    .AddBehavior<AuditGetOrder>()                   // IPipelineBehavior<GetOrder, OrderDto>
+    .AddOpenBehavior(typeof(ValidationBehaviour<,>))); // innermost
+```
+
+Open and closed behaviors share a single ordering, so the first one added is outermost regardless of which kind it is. Registering directly against the container still works too:
 `services.AddTransient<IPipelineBehavior<GetOrder, OrderDto>, MyBehavior>()`.
 
 Void requests run through the same pipeline with `TResponse == Unit`, so open-generic behaviors apply to them unchanged.
@@ -95,7 +105,7 @@ Handlers run **sequentially, in registration order** — never in parallel — s
 
 ## Migrating from MediatR
 
-1. Replace the `MediatR` package reference with `Switchboard`.
+1. Replace the `MediatR` package reference with `SoftwareFirst.Switchboard`.
 2. Replace `using MediatR;` with `using Switchboard;`.
 3. Replace `services.AddMediatR(...)` with `services.AddSwitchboard(...)` — the configuration methods (`RegisterServicesFromAssemblyContaining`, `RegisterServicesFromAssembly`, `AddOpenBehavior`) keep their names.
 

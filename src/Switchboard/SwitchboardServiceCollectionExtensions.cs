@@ -38,9 +38,20 @@ public static class SwitchboardServiceCollectionExtensions
             RegisterHandlers(services, assembly);
         }
 
-        foreach (var openBehavior in configuration.OpenBehaviors)
+        // Registered in the order they were configured, so DI hands them back in that same
+        // order and the first one added ends up outermost — open and closed alike.
+        foreach (var behavior in configuration.Behaviors)
         {
-            services.AddTransient(typeof(IPipelineBehavior<,>), openBehavior);
+            if (behavior.IsGenericTypeDefinition)
+            {
+                services.AddTransient(typeof(IPipelineBehavior<,>), behavior);
+                continue;
+            }
+
+            foreach (var closedInterface in SwitchboardConfiguration.ClosedBehaviorInterfaces(behavior))
+            {
+                services.AddTransient(closedInterface, behavior);
+            }
         }
 
         return services;

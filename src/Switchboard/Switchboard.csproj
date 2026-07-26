@@ -7,8 +7,9 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <PackageId>Switchboard</PackageId>
-    <Version>1.0.0</Version>
+    <PackageId>SoftwareFirst.Switchboard</PackageId>
+    <Version>1.0.1</Version>
+    <PackageReleaseNotes>Adds SwitchboardConfiguration.AddBehavior for registering closed pipeline behaviors. Open and closed behaviors now share a single ordering, so the first one added runs outermost regardless of kind.</PackageReleaseNotes>
     <Authors>Software First</Authors>
     <Company>Software First</Company>
     <Copyright>Copyright © Software First</Copyright>
@@ -35,7 +36,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
 </Project>
