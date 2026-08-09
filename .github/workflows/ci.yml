@@ -14,10 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # All three runtimes are installed so the test suite executes on every
+      # target framework, not just the newest one.
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Restore
         run: dotnet restore
@@ -55,7 +60,10 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Pack (version from tag)
         run: dotnet pack src/Switchboard/Switchboard.csproj --configuration Release --output artifacts -p:Version=${GITHUB_REF_NAME#v} -p:ContinuousIntegrationBuild=true
