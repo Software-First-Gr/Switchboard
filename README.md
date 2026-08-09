@@ -13,7 +13,19 @@ Switchboard implements the request/response, notification, and pipeline-behavior
 dotnet add package SoftwareFirst.Switchboard
 ```
 
-Targets `net10.0`. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
+Targets `net8.0`, `net9.0` and `net10.0`, so you can move off MediatR without moving frameworks first. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
+
+## Why this one
+
+Several MediatR alternatives exist now, and most compete on speed or feature count. Switchboard competes on being small:
+
+- **A few hundred lines**, across about a dozen files you can read end to end in one sitting.
+- **One dependency** — `Microsoft.Extensions.DependencyInjection.Abstractions`, floored at the lowest patch of each major so it never drags your other `Microsoft.Extensions.*` packages forward.
+- **No source generators, analyzers, or build-time magic.** Plain reflection over the DI container, the way MediatR does it.
+- **A deliberately identical API surface** — the migration is a find-and-replace, not a rewrite.
+- **Apache 2.0**, extracted from a production system that made this exact switch.
+
+If you need streaming, parallel publish strategies, or maximum throughput, a source-generated alternative is the better fit — the [migration table](#migrating-from-mediatr) below says so explicitly.
 
 ## Quick start
 
