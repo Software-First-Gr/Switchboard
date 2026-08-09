@@ -2,8 +2,11 @@
 
 [![NuGet](https://img.shields.io/nuget/v/SoftwareFirst.Switchboard.svg)](https://www.nuget.org/packages/SoftwareFirst.Switchboard)
 [![CI](https://github.com/Software-First-Gr/Switchboard/actions/workflows/ci.yml/badge.svg)](https://github.com/Software-First-Gr/Switchboard/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **A lightweight, MediatR-compatible mediator for .NET.**
+
+📖 Overview, migration guide and FAQ: **[softwarefirst.gr/switchboard](https://softwarefirst.gr/switchboard)**
 
 Switchboard implements the request/response, notification, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in a few hundred lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
 
