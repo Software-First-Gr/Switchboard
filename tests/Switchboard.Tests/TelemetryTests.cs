@@ -118,6 +118,9 @@ public sealed class TelemetryTests
                     listener.EnableMeasurementEvents(instrument);
                 }
             },
+            // On .NET 8, Dispose() only releases the enabled instruments when this callback is set; without it the
+            // histograms stay Enabled for the rest of the process and every later dispatch takes the observed path.
+            MeasurementsCompleted = (_, _) => { },
         };
         meterListener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
             measurements.Enqueue((instrument.Name, value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value))));

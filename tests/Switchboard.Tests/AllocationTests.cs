@@ -59,6 +59,11 @@ public sealed class AllocationTests
         var request = new AllocationProbe();
         var voidRequest = new VoidAllocationProbe();
 
+        Assert.False(
+            SwitchboardTelemetry.IsRequestObserved,
+            "a tracing or metrics listener is still attached, so every dispatch records a span and allocates by design; " +
+            "a test that subscribed must release its listener (on .NET 8, a MeterListener needs MeasurementsCompleted set for Dispose to do so)");
+
         var handlerOnly = BytesPerOp(() => provider.GetRequiredService<IRequestHandler<AllocationProbe, string>>());
         var send = BytesPerOp(() => sender.Send(request).GetAwaiter().GetResult());
         var voidHandlerOnly = BytesPerOp(() => provider.GetRequiredService<IRequestHandler<VoidAllocationProbe>>());
