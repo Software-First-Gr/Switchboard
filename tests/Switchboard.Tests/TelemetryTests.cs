@@ -35,10 +35,14 @@ public sealed class TelemetryNoteHandler : INotificationHandler<TelemetryNote>
 
 /// <summary>
 /// Listeners are process-wide, so other tests running in parallel may emit Switchboard telemetry too;
-/// every assertion filters on the probe types declared above.
+/// every assertion filters on the probe types declared above. Tests that must not run while a listener
+/// is attached join <see cref="CollectionName"/>.
 /// </summary>
+[Collection(CollectionName)]
 public sealed class TelemetryTests
 {
+    public const string CollectionName = "Switchboard telemetry listeners";
+
     private static ServiceProvider BuildProvider() =>
         new ServiceCollection()
             .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<TelemetryTests>())

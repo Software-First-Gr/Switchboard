@@ -13,6 +13,10 @@ For step-by-step upgrade instructions, see [Upgrading to 1.2](README.md#upgradin
 - **`AddOpenBehavior` rejects a behavior with other than two type parameters** with a clear message, instead of letting the container fail later at build time. `ValidateSwitchboard` no longer throws `IndexOutOfRangeException` for such a behavior registered directly on the container.
 - **A later `AddSwitchboard` call can add or replace the scope-per-dispatch callback.** It used to be silently dropped when an earlier call had already switched scope-per-dispatch on. The last callback configured wins; a bare `UseScopePerDispatch()` never removes one configured elsewhere.
 
+### Changed
+
+- **Fewer allocations per dispatch.** A `Send` or `Publish` with no behaviors now allocates nothing beyond the handler itself; with behaviors, each dispatch allocates about 100 bytes less than before, and a void handler that completes synchronously no longer allocates a `Task<Unit>`. The telemetry closure was being allocated on every dispatch even with no listener attached; it is now only paid for when tracing or metrics are on.
+
 ## [1.2.1] — 2026-09-13
 
 ### Fixed
