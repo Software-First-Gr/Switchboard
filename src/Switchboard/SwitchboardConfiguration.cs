@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Switchboard;
 
@@ -15,6 +17,9 @@ public sealed class SwitchboardConfiguration
     /// Registration order is preserved so the first one added always runs outermost.
     /// </summary>
     internal List<Type> Behaviors { get; } = new();
+
+    /// <summary>Set when <see cref="UseScopePerDispatch()"/> (or an overload) was called.</summary>
+    internal DispatchScopeOptions? ScopePerDispatch { get; private set; }
 
     /// <summary>Scans the assembly containing <typeparamref name="T"/> for handlers.</summary>
     public SwitchboardConfiguration RegisterServicesFromAssemblyContaining<T>()
@@ -82,6 +87,52 @@ public sealed class SwitchboardConfiguration
         }
 
         Behaviors.Add(behaviorType);
+        return this;
+    }
+
+    /// <summary>
+    /// Runs every top-level <c>Send</c> and <c>Publish</c> in its own short-lived DI scope instead of
+    /// the caller's, so each operation gets fresh scoped services — one <c>DbContext</c> per unit of work.
+    /// Built for Blazor Server, where the caller's scope is the whole circuit and a shared
+    /// <c>DbContext</c> fails with "a second operation was started on this context".
+    /// </summary>
+    /// <remarks>
+    /// A handler that sends or publishes again reuses the scope already in flight, so nested work
+    /// shares one unit of work. Work that outlives the dispatch (fire-and-forget) must not reuse it.
+    /// </remarks>
+    public SwitchboardConfiguration UseScopePerDispatch()
+    {
+        ScopePerDispatch = new DispatchScopeOptions(null);
+        return this;
+    }
+
+    /// <summary>
+    /// Runs every top-level dispatch in its own DI scope (see <see cref="UseScopePerDispatch()"/>) and calls
+    /// <paramref name="onScopeCreated"/> before the handler runs, to carry ambient state such as the
+    /// current user from <see cref="DispatchScope.Parent"/> into <see cref="DispatchScope.ServiceProvider"/>.
+    /// </summary>
+    public SwitchboardConfiguration UseScopePerDispatch(Action<DispatchScope> onScopeCreated)
+    {
+        ArgumentNullException.ThrowIfNull(onScopeCreated);
+
+        ScopePerDispatch = new DispatchScopeOptions((scope, _) =>
+        {
+            onScopeCreated(scope);
+            return ValueTask.CompletedTask;
+        });
+        return this;
+    }
+
+    /// <summary>
+    /// Runs every top-level dispatch in its own DI scope (see <see cref="UseScopePerDispatch()"/>) and awaits
+    /// <paramref name="onScopeCreated"/> before the handler runs, to carry ambient state such as the
+    /// current user from <see cref="DispatchScope.Parent"/> into <see cref="DispatchScope.ServiceProvider"/>.
+    /// </summary>
+    public SwitchboardConfiguration UseScopePerDispatch(Func<DispatchScope, CancellationToken, ValueTask> onScopeCreated)
+    {
+        ArgumentNullException.ThrowIfNull(onScopeCreated);
+
+        ScopePerDispatch = new DispatchScopeOptions(onScopeCreated);
         return this;
     }
 

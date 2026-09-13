@@ -9,8 +9,8 @@
 
   <PropertyGroup Label="Package">
     <PackageId>SoftwareFirst.Switchboard</PackageId>
-    <Version>1.1.0</Version>
-    <PackageReleaseNotes>Adds net8.0 and net9.0 targets alongside net10.0, so the package can be adopted without a framework upgrade. No API changes.</PackageReleaseNotes>
+    <Version>1.2.0</Version>
+    <PackageReleaseNotes>Startup validation (ValidateSwitchboard), built-in OpenTelemetry tracing and metrics, and scope-per-dispatch for Blazor Server. Fix: calling AddSwitchboard more than once on the same assembly no longer registers handlers and behaviors twice.</PackageReleaseNotes>
     <Authors>Software First</Authors>
     <Company>Software First</Company>
     <Copyright>Copyright © Software First</Copyright>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Switchboard;
 
@@ -13,14 +14,23 @@ namespace Switchboard;
 public sealed class Mediator : IMediator
 {
     private readonly IServiceProvider _provider;
+    private readonly DispatchScopeOptions? _scopePerDispatch;
 
     // Closed wrappers are cached per request/notification type; they are stateless and thread-safe.
     private static readonly ConcurrentDictionary<Type, RequestHandlerWrapperBase> RequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, VoidRequestHandlerWrapper> VoidRequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> NotificationWrappers = new();
 
+    // The scope of the dispatch in flight on this async path, when scope-per-dispatch is on. A handler
+    // that sends or publishes again reuses it, so the inner work shares the outer unit of work.
+    private static readonly AsyncLocal<IServiceProvider?> ActiveDispatchScope = new();
+
     /// <summary>Creates a mediator that resolves handlers and behaviors from <paramref name="provider"/>.</summary>
-    public Mediator(IServiceProvider provider) => _provider = provider;
+    public Mediator(IServiceProvider provider)
+    {
+        _provider = provider;
+        _scopePerDispatch = provider.GetService<DispatchScopeOptions>();
+    }
 
     /// <inheritdoc />
     public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
@@ -32,7 +42,7 @@ public sealed class Mediator : IMediator
             requestType => (RequestHandlerWrapperBase)Activator.CreateInstance(
                 typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(requestType, typeof(TResponse)))!);
 
-        return wrapper.Handle(request, _provider, cancellationToken);
+        return Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
     }
 
     /// <inheritdoc />
@@ -46,7 +56,7 @@ public sealed class Mediator : IMediator
             static requestType => (VoidRequestHandlerWrapper)Activator.CreateInstance(
                 typeof(VoidRequestHandlerWrapperImpl<>).MakeGenericType(requestType))!);
 
-        return wrapper.Handle(request, _provider, cancellationToken);
+        return Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
     }
 
     /// <inheritdoc />
@@ -67,7 +77,7 @@ public sealed class Mediator : IMediator
                 rt => (RequestHandlerWrapperBase)Activator.CreateInstance(
                     typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(rt, responseType))!);
 
-            return await wrapper.HandleUntyped(request, _provider, cancellationToken);
+            return await Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.HandleUntyped(r, sp, ct));
         }
 
         if (request is IRequest)
@@ -77,7 +87,7 @@ public sealed class Mediator : IMediator
                 static rt => (VoidRequestHandlerWrapper)Activator.CreateInstance(
                     typeof(VoidRequestHandlerWrapperImpl<>).MakeGenericType(rt))!);
 
-            await wrapper.Handle(request, _provider, cancellationToken);
+            await Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
             return null;
         }
 
@@ -114,6 +124,50 @@ public sealed class Mediator : IMediator
             static notificationType => (NotificationHandlerWrapper)Activator.CreateInstance(
                 typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(notificationType))!);
 
-        return wrapper.Handle(notification, _provider, cancellationToken);
+        return Dispatch(wrapper, notification, cancellationToken, static (w, n, sp, ct) => w.Handle(n, sp, ct));
+    }
+
+    /// <summary>
+    /// Picks the provider the message is handled from: the caller's scope by default, or — with
+    /// scope-per-dispatch on — the dispatch already in flight, else a fresh scope for this message.
+    /// </summary>
+    private Task<TResult> Dispatch<TWrapper, TResult>(
+        TWrapper wrapper,
+        object message,
+        CancellationToken cancellationToken,
+        Func<TWrapper, object, IServiceProvider, CancellationToken, Task<TResult>> invoke)
+    {
+        if (_scopePerDispatch is null)
+        {
+            return invoke(wrapper, message, _provider, cancellationToken);
+        }
+
+        if (ActiveDispatchScope.Value is { } activeScope)
+        {
+            return invoke(wrapper, message, activeScope, cancellationToken);
+        }
+
+        return DispatchInNewScope(_scopePerDispatch, wrapper, message, cancellationToken, invoke);
+    }
+
+    private async Task<TResult> DispatchInNewScope<TWrapper, TResult>(
+        DispatchScopeOptions options,
+        TWrapper wrapper,
+        object message,
+        CancellationToken cancellationToken,
+        Func<TWrapper, object, IServiceProvider, CancellationToken, Task<TResult>> invoke)
+    {
+        await using var scope = _provider.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+
+        // Set inside an async method, so the value flows into the handler and anything it awaits,
+        // but never back out to the caller: sibling dispatches each still get their own scope.
+        ActiveDispatchScope.Value = scope.ServiceProvider;
+
+        if (options.OnScopeCreated is { } onScopeCreated)
+        {
+            await onScopeCreated(new DispatchScope(_provider, scope.ServiceProvider, message), cancellationToken);
+        }
+
+        return await invoke(wrapper, message, scope.ServiceProvider, cancellationToken);
     }
 }
