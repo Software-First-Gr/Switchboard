@@ -272,7 +272,7 @@ services.AddSwitchboard(cfg => cfg
 ### 1. Bump the package
 
 ```bash
-dotnet add package SoftwareFirst.Switchboard --version 1.2.0
+dotnet add package SoftwareFirst.Switchboard --version 1.2.2
 ```
 
 With central package management, change the version in `Directory.Packages.props` instead.

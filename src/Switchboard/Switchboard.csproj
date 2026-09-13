@@ -9,8 +9,8 @@
 
   <PropertyGroup Label="Package">
     <PackageId>SoftwareFirst.Switchboard</PackageId>
-    <Version>1.2.1</Version>
-    <PackageReleaseNotes>Fix: with UseScopePerDispatch, a mediator resolved from a scope you created yourself inside a handler now gets its own dispatch scope instead of silently reusing the outer one. Nested dispatches through an injected ISender/IPublisher still share the outer scope. See CHANGELOG.md.</PackageReleaseNotes>
+    <Version>1.2.2</Version>
+    <PackageReleaseNotes>Fixes: a covariant Send (e.g. Send&lt;object&gt; or through IRequest&lt;ISomeBase&gt;) no longer poisons the handler cache; a behavior can hand next() a different cancellation token; AddOpenBehavior rejects behaviors without exactly two type parameters; a later AddSwitchboard call can add or replace the scope-per-dispatch callback. Fewer allocations per dispatch: none beyond the handler when no behaviors are registered. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Software First</Authors>
     <Company>Software First</Company>
     <Copyright>Copyright © Software First</Copyright>

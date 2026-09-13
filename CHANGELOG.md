@@ -4,7 +4,7 @@ All notable changes to Switchboard. The format follows [Keep a Changelog](https:
 
 For step-by-step upgrade instructions, see [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
-## [Unreleased]
+## [1.2.2] — 2026-09-13
 
 ### Fixed
 
@@ -63,7 +63,7 @@ No breaking API changes: every 1.1 call site compiles and behaves the same, apar
 
 - Initial release: `IRequest`/`IRequest<T>`, `INotification`, `IPipelineBehavior<,>`, `ISender`/`IPublisher`/`IMediator`, untyped `Send(object)`/`Publish(object)`, and assembly scanning, all MediatR-compatible.
 
-[Unreleased]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.1...HEAD
+[1.2.2]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.0.1...v1.1.0
