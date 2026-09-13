@@ -4,6 +4,12 @@ All notable changes to Switchboard. The format follows [Keep a Changelog](https:
 
 For step-by-step upgrade instructions, see [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
+## [1.2.1] — 2026-09-13
+
+### Fixed
+
+- **Scope per dispatch no longer merges scopes you isolate on purpose.** In 1.2.0, while a dispatch was in flight, *any* nested `Send`/`Publish` reused its scope — including one made through a mediator resolved from a scope the handler had created itself to get its own `DbContext`. That silently put the isolated work back on the outer `DbContext`. Now only a mediator resolved from the in-flight scope (the `ISender`/`IPublisher` injected into a handler) joins it; any other mediator starts its own dispatch scope. Only affects apps that call `UseScopePerDispatch`.
+
 ## [1.2.0] — 2026-09-13
 
 No breaking API changes: every 1.1 call site compiles and behaves the same, apart from the fix and the small behavior notes below.
@@ -44,6 +50,7 @@ No breaking API changes: every 1.1 call site compiles and behaves the same, apar
 
 - Initial release: `IRequest`/`IRequest<T>`, `INotification`, `IPipelineBehavior<,>`, `ISender`/`IPublisher`/`IMediator`, untyped `Send(object)`/`Publish(object)`, and assembly scanning, all MediatR-compatible.
 
+[1.2.1]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/Software-First-Gr/Switchboard/releases/tag/v1.0.1

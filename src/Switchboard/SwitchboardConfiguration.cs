@@ -97,8 +97,10 @@ public sealed class SwitchboardConfiguration
     /// <c>DbContext</c> fails with "a second operation was started on this context".
     /// </summary>
     /// <remarks>
-    /// A handler that sends or publishes again reuses the scope already in flight, so nested work
-    /// shares one unit of work. Work that outlives the dispatch (fire-and-forget) must not reuse it.
+    /// A handler that sends or publishes again through its injected <see cref="ISender"/> or
+    /// <see cref="IPublisher"/> reuses the scope already in flight, so nested work shares one unit of work.
+    /// A mediator resolved from a scope you create yourself gets its own dispatch scope instead.
+    /// Work that outlives the dispatch (fire-and-forget) must not reuse it.
     /// </remarks>
     public SwitchboardConfiguration UseScopePerDispatch()
     {

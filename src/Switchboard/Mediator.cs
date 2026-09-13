@@ -22,7 +22,8 @@ public sealed class Mediator : IMediator
     private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> NotificationWrappers = new();
 
     // The scope of the dispatch in flight on this async path, when scope-per-dispatch is on. A handler
-    // that sends or publishes again reuses it, so the inner work shares the outer unit of work.
+    // that sends or publishes again through a mediator resolved in that scope reuses it, so the inner
+    // work shares the outer unit of work.
     private static readonly AsyncLocal<IServiceProvider?> ActiveDispatchScope = new();
 
     /// <summary>Creates a mediator that resolves handlers and behaviors from <paramref name="provider"/>.</summary>
@@ -129,7 +130,8 @@ public sealed class Mediator : IMediator
 
     /// <summary>
     /// Picks the provider the message is handled from: the caller's scope by default, or — with
-    /// scope-per-dispatch on — the dispatch already in flight, else a fresh scope for this message.
+    /// scope-per-dispatch on — the dispatch in flight when this mediator was resolved from it, else a
+    /// fresh scope for this message.
     /// </summary>
     private Task<TResult> Dispatch<TWrapper, TResult>(
         TWrapper wrapper,
@@ -142,9 +144,12 @@ public sealed class Mediator : IMediator
             return invoke(wrapper, message, _provider, cancellationToken);
         }
 
-        if (ActiveDispatchScope.Value is { } activeScope)
+        // Only a mediator resolved from the scope in flight — the ISender or IPublisher injected into a
+        // handler — joins it. One resolved from a scope the caller created on purpose, to keep its own
+        // DbContext, must not be folded back into the outer unit of work.
+        if (ReferenceEquals(ActiveDispatchScope.Value, _provider))
         {
-            return invoke(wrapper, message, activeScope, cancellationToken);
+            return invoke(wrapper, message, _provider, cancellationToken);
         }
 
         return DispatchInNewScope(_scopePerDispatch, wrapper, message, cancellationToken, invoke);

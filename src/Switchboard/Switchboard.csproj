@@ -9,8 +9,8 @@
 
   <PropertyGroup Label="Package">
     <PackageId>SoftwareFirst.Switchboard</PackageId>
-    <Version>1.2.0</Version>
-    <PackageReleaseNotes>Startup validation (ValidateSwitchboard), built-in OpenTelemetry tracing and metrics, and scope-per-dispatch for Blazor Server. Fix: calling AddSwitchboard more than once on the same assembly no longer registers handlers and behaviors twice.</PackageReleaseNotes>
+    <Version>1.2.1</Version>
+    <PackageReleaseNotes>Fix: with UseScopePerDispatch, a mediator resolved from a scope you created yourself inside a handler now gets its own dispatch scope instead of silently reusing the outer one. Nested dispatches through an injected ISender/IPublisher still share the outer scope. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Software First</Authors>
     <Company>Software First</Company>
     <Copyright>Copyright © Software First</Copyright>

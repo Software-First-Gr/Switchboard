@@ -245,7 +245,8 @@ services.AddSwitchboard(cfg => cfg
 ```
 
 - Every top-level `Send` and `Publish` runs in its **own DI scope**, disposed when it completes — one `DbContext`, one unit of work per operation.
-- A handler that sends or publishes again **reuses the scope in flight**, so nested commands (and domain events published from `SaveChanges`) share one `DbContext` and one transaction.
+- A handler that sends or publishes again through its injected `ISender`/`IPublisher` **reuses the scope in flight**, so nested commands (and domain events published from `SaveChanges`) share one `DbContext` and one transaction.
+- A scope you create yourself inside a handler stays yours: a mediator resolved from it gets its own dispatch scope, so deliberately isolated work is never folded back into the outer unit of work.
 - Concurrent dispatches from the same circuit never share a scope.
 
 Scoped state that lived in the caller's scope — typically the current user — has to be carried into the new one. The callback runs before the handler, with both scopes in hand:

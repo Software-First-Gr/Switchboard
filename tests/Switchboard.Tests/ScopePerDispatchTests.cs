@@ -127,6 +127,40 @@ public sealed class ScopePerDispatchTests
         Assert.Same(outer, inner);
     }
 
+    public sealed record IsolatedScopeProbe : IRequest<(ScopeMarker Outer, ScopeMarker Inner)>;
+
+    /// <summary>Opens a scope of its own on purpose — the way code isolates a DbContext — and sends through it.</summary>
+    public sealed class IsolatedScopeProbeHandler : IRequestHandler<IsolatedScopeProbe, (ScopeMarker Outer, ScopeMarker Inner)>
+    {
+        private readonly ScopeMarker _marker;
+        private readonly IServiceScopeFactory _scopes;
+
+        public IsolatedScopeProbeHandler(ScopeMarker marker, IServiceScopeFactory scopes)
+        {
+            _marker = marker;
+            _scopes = scopes;
+        }
+
+        public async Task<(ScopeMarker Outer, ScopeMarker Inner)> Handle(IsolatedScopeProbe request, CancellationToken cancellationToken)
+        {
+            await using var ownScope = _scopes.CreateAsyncScope();
+            var inner = await ownScope.ServiceProvider.GetRequiredService<ISender>().Send(new ScopeProbe(), cancellationToken);
+            return (_marker, inner);
+        }
+    }
+
+    [Fact]
+    public async Task A_send_through_a_scope_the_handler_created_itself_is_not_folded_into_the_outer_dispatch()
+    {
+        await using var provider = BuildProvider(cfg => cfg.UseScopePerDispatch());
+        await using var callerScope = provider.CreateAsyncScope();
+
+        var (outer, inner) = await callerScope.ServiceProvider.GetRequiredService<ISender>().Send(new IsolatedScopeProbe());
+
+        Assert.NotSame(outer, inner); // 1.2.0 handed back the outer dispatch's own marker here
+        Assert.True(inner.Disposed, "the inner dispatch got, and disposed, a scope of its own");
+    }
+
     [Fact]
     public async Task Publish_also_runs_in_its_own_scope()
     {
