@@ -8,6 +8,8 @@
 
 📖 Overview, migration guide and FAQ: **[softwarefirst.gr/switchboard](https://softwarefirst.gr/switchboard)**
 
+> **New in 1.2:** startup validation, built-in OpenTelemetry, scope per dispatch for Blazor Server, and a fix for handlers registered twice. It's a drop-in upgrade from 1.1 — see **[Upgrading to 1.2](#upgrading-to-12)** and the [changelog](CHANGELOG.md).
+
 Switchboard implements the request/response, notification, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 500 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
 
 ## Install
@@ -261,6 +263,82 @@ services.AddSwitchboard(cfg => cfg
 `scope.Parent` is the caller's scope, `scope.ServiceProvider` the new one, and `scope.Message` the request or notification. A synchronous overload, `UseScopePerDispatch(scope => ...)`, is there too.
 
 > Work that outlives the dispatch — `Task.Run` fire-and-forget started inside a handler — must not send through the mediator it inherited: the scope it would reuse is disposed when the outer dispatch completes. Create a scope of your own for background work.
+
+## Upgrading to 1.2
+
+1.2 is a drop-in upgrade from 1.1: no API was removed or changed, so bumping the package is enough to compile and run. The new features are opt-in. The steps below take about fifteen minutes and are worth doing, because the validation tends to find something real.
+
+### 1. Bump the package
+
+```bash
+dotnet add package SoftwareFirst.Switchboard --version 1.2.0
+```
+
+With central package management, change the version in `Directory.Packages.props` instead.
+
+### 2. Check the two behavior notes
+
+Most applications are unaffected by either note, but they are the only differences you can observe:
+
+| What changed | Who notices | What to do |
+| --- | --- | --- |
+| Registering the same handler or behavior twice (two `AddSwitchboard` calls, or `AddOpenBehavior` plus a direct `AddTransient` of the same type) now registers it **once**. | Apps where a notification handler or behavior was running twice without anyone meaning it to. That was a bug, and it's fixed. | Nothing, unless you relied on the double run. If a behavior was registered both ways, it now sits at the position of its **first** registration, so check the pipeline order. |
+| Exceptions can surface through the returned `Task` instead of being thrown synchronously from `Send` (when telemetry is listened to or scope-per-dispatch is on). | Only code that calls `Send` without `await` inside a `try`. | `await` the call. |
+
+### 3. Turn on startup validation
+
+Add it after every registration, just before the provider is built:
+
+```csharp
+builder.Services.ValidateSwitchboard();
+var app = builder.Build();
+```
+
+Also add a one-line test over your real registrations, so a problem fails the build before it fails a deploy:
+
+```csharp
+[Fact]
+public void Switchboard_registrations_are_valid()
+    => new ServiceCollection().AddApplication().ValidateSwitchboard();
+```
+
+If it throws, each message says what to fix:
+
+| Message | Fix |
+| --- | --- |
+| `X has no handler` | Add the handler. If the request is handled in another host, turn the check off for this one: `ValidateSwitchboard(o => o.RequireHandlerForEveryRequest = false)`. |
+| `X has 2 handlers (A, B)` | Delete the handler that shouldn't exist. Until now only the last one registered was running. |
+| `SomeBehaviour<TRequest, TResponse> never runs for N void request(s)` | Change the constraint from `where TRequest : IRequest<TResponse>` to `where TRequest : IBaseRequest`. |
+
+> **Before widening a constraint, read the behavior.** After the change it starts running for your void commands too. For logging, timing, exception handling and validation that is the point. For a transaction or caching behavior, make sure that's what you want. Any metrics the behavior records also gain a series per void command, so dashboards and alerts that filter by request name may start matching commands they never saw before.
+
+### 4. Opt into telemetry (optional)
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource(SwitchboardTelemetry.ActivitySourceName))
+    .WithMetrics(metrics => metrics.AddMeter(SwitchboardTelemetry.MeterName));
+```
+
+If you already have a `PerformanceBehaviour` that starts its own span, you'll see Switchboard's `Send X` span as its parent. Either is fine to keep. The `Publish` and `Handle` spans for notification handlers are usually the new information. See [OpenTelemetry](#opentelemetry) for the span and metric names.
+
+### 5. Blazor Server: replace a hand-written scoping sender (optional)
+
+If you wrote an `ISender` decorator that creates a scope per call to avoid sharing a `DbContext` across a circuit, 1.2 does the same thing for `Send` **and** `Publish`, and handles nested dispatches:
+
+```csharp
+// Before
+services.AddScoped<ISender, ScopingSender>();
+
+// After
+services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellationToken) =>
+{
+    var auth = await scope.Parent.GetRequiredService<AuthenticationStateProvider>().GetAuthenticationStateAsync();
+    scope.ServiceProvider.GetRequiredService<CurrentUser>().Set(auth.User);
+}));
+```
+
+`AddSwitchboard` is safe to call again for this, so you can put it in the host or infrastructure layer without touching your application layer's registration. Port the decorator's tests too, especially for identity: the callback is where the user carries over. See [Scope per dispatch](#scope-per-dispatch-blazor-server).
 
 ## Migrating from MediatR
 
