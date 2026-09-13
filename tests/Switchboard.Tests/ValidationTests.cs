@@ -113,6 +113,15 @@ public sealed class ValidationTests
     }
 
     [Fact]
+    public void Does_not_crash_on_a_behavior_registered_directly_that_the_container_cannot_close()
+    {
+        // Wrong arity: the container reports it itself when the provider is built. Validation must not fail before that with an index error.
+        var services = Scanned().AddTransient(typeof(IPipelineBehavior<,>), typeof(ThreeParameterBehavior<,,>));
+
+        services.ValidateSwitchboard(o => o.RequireHandlerForEveryRequest = false);
+    }
+
+    [Fact]
     public void Does_not_report_behaviors_that_exclude_requests_on_purpose()
     {
         var services = Scanned(cfg => cfg

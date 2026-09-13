@@ -192,6 +192,57 @@ public sealed class ScopePerDispatchTests
         Assert.Equal("user-of-" + callerMarker.Id, handled.SeededUser);
     }
 
+    private static ServiceProvider BuildProviderInTwoCalls(Action<SwitchboardConfiguration> first, Action<SwitchboardConfiguration> second) =>
+        new ServiceCollection()
+            .AddScoped<ScopeMarker>()
+            .AddSwitchboard(cfg =>
+            {
+                cfg.RegisterServicesFromAssemblyContaining<ScopePerDispatchTests>();
+                first(cfg);
+            })
+            .AddSwitchboard(second)
+            .BuildServiceProvider(validateScopes: true);
+
+    private static Action<DispatchScope> Seed(string user)
+        => scope => scope.ServiceProvider.GetRequiredService<ScopeMarker>().SeededUser = user;
+
+    [Fact]
+    public async Task A_later_AddSwitchboard_can_add_the_callback_to_scope_per_dispatch_switched_on_earlier()
+    {
+        await using var provider = BuildProviderInTwoCalls(
+            cfg => cfg.UseScopePerDispatch(),
+            cfg => cfg.UseScopePerDispatch(Seed("host")));
+
+        var handled = await provider.GetRequiredService<ISender>().Send(new ScopeProbe());
+
+        Assert.Equal("host", handled.SeededUser);
+    }
+
+    [Fact]
+    public async Task A_bare_UseScopePerDispatch_in_a_later_AddSwitchboard_keeps_the_callback()
+    {
+        await using var provider = BuildProviderInTwoCalls(
+            cfg => cfg.UseScopePerDispatch(Seed("host")),
+            cfg => cfg.UseScopePerDispatch());
+
+        var handled = await provider.GetRequiredService<ISender>().Send(new ScopeProbe());
+
+        Assert.Equal("host", handled.SeededUser);
+    }
+
+    [Fact]
+    public async Task The_last_callback_configured_wins()
+    {
+        await using var provider = BuildProviderInTwoCalls(
+            cfg => cfg.UseScopePerDispatch(Seed("first")),
+            cfg => cfg.UseScopePerDispatch(Seed("second")));
+
+        var handled = await provider.GetRequiredService<ISender>().Send(new ScopeProbe());
+
+        Assert.Equal("second", handled.SeededUser);
+        Assert.Single(provider.GetServices<IMediator>());
+    }
+
     [Fact]
     public async Task The_async_callback_is_awaited_before_the_handler_runs()
     {

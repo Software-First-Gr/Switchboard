@@ -4,6 +4,15 @@ All notable changes to Switchboard. The format follows [Keep a Changelog](https:
 
 For step-by-step upgrade instructions, see [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
+## [Unreleased]
+
+### Fixed
+
+- **A covariant `Send` no longer poisons the handler cache.** `IRequest<out TResponse>` is covariant, so `Send<object>(new GetOrder())` or sending through `IRequest<ISomeBase>` compiles. It used to look for `IRequestHandler<GetOrder, object>`, fail, and cache that wrapper under `GetOrder`, after which every correct `Send(new GetOrder())` in the process threw `InvalidCastException`. The declared handler now runs and its response is converted.
+- **A behavior can hand the rest of the pipeline a different token.** The token passed to `next(...)` used to be ignored, so a timeout behavior passing a linked token had no effect. It is now honored by everything inside that behavior; `next()` with no token keeps the token the behavior received, so cancellation is still never lost.
+- **`AddOpenBehavior` rejects a behavior with other than two type parameters** with a clear message, instead of letting the container fail later at build time. `ValidateSwitchboard` no longer throws `IndexOutOfRangeException` for such a behavior registered directly on the container.
+- **A later `AddSwitchboard` call can add or replace the scope-per-dispatch callback.** It used to be silently dropped when an earlier call had already switched scope-per-dispatch on. The last callback configured wins; a bare `UseScopePerDispatch()` never removes one configured elsewhere.
+
 ## [1.2.1] — 2026-09-13
 
 ### Fixed
@@ -50,6 +59,7 @@ No breaking API changes: every 1.1 call site compiles and behaves the same, apar
 
 - Initial release: `IRequest`/`IRequest<T>`, `INotification`, `IPipelineBehavior<,>`, `ISender`/`IPublisher`/`IMediator`, untyped `Send(object)`/`Publish(object)`, and assembly scanning, all MediatR-compatible.
 
+[Unreleased]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.1...HEAD
 [1.2.1]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.0.1...v1.1.0

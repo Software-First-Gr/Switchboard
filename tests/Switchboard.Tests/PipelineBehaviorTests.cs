@@ -86,7 +86,7 @@ public sealed class ShortCircuitBehavior : IPipelineBehavior<Tracked, string>
         => request.ShortCircuit ? Task.FromResult("short-circuited") : next(cancellationToken);
 }
 
-public sealed record TokenProbe : IRequest<CancellationToken>;
+public sealed record TokenProbe(CancellationToken Substitute = default) : IRequest<CancellationToken>;
 
 public sealed class TokenProbeHandler : IRequestHandler<TokenProbe, CancellationToken>
 {
@@ -99,6 +99,13 @@ public sealed class TokenDroppingBehavior : IPipelineBehavior<TokenProbe, Cancel
 {
     public Task<CancellationToken> Handle(TokenProbe request, RequestHandlerDelegate<CancellationToken> next, CancellationToken cancellationToken)
         => next();
+}
+
+/// <summary>Hands the rest of the pipeline a token of its own, the way a timeout behavior does with a linked token.</summary>
+public sealed class TokenSubstitutingBehavior : IPipelineBehavior<TokenProbe, CancellationToken>
+{
+    public Task<CancellationToken> Handle(TokenProbe request, RequestHandlerDelegate<CancellationToken> next, CancellationToken cancellationToken)
+        => next(request.Substitute);
 }
 
 public sealed class PipelineBehaviorTests
@@ -225,5 +232,38 @@ public sealed class PipelineBehaviorTests
 
         Assert.True(received == cts.Token, "handler should receive the original token");
         Assert.False(received == CancellationToken.None, "token should not degrade to default");
+    }
+
+    [Fact]
+    public async Task A_behavior_can_hand_the_rest_of_the_pipeline_a_token_of_its_own()
+    {
+        await using var provider = new ServiceCollection()
+            .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<PipelineBehaviorTests>())
+            .AddTransient<IPipelineBehavior<TokenProbe, CancellationToken>, TokenSubstitutingBehavior>()
+            .BuildServiceProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        using var original = new CancellationTokenSource();
+        using var substitute = new CancellationTokenSource();
+
+        var received = await sender.Send(new TokenProbe(substitute.Token), original.Token);
+
+        Assert.True(received == substitute.Token, "handler should receive the token the behavior passed to next");
+    }
+
+    [Fact]
+    public async Task A_substituted_token_survives_an_inner_behavior_that_calls_next_bare()
+    {
+        await using var provider = new ServiceCollection()
+            .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<PipelineBehaviorTests>())
+            .AddTransient<IPipelineBehavior<TokenProbe, CancellationToken>, TokenSubstitutingBehavior>() // outer
+            .AddTransient<IPipelineBehavior<TokenProbe, CancellationToken>, TokenDroppingBehavior>()     // inner
+            .BuildServiceProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        using var original = new CancellationTokenSource();
+        using var substitute = new CancellationTokenSource();
+
+        var received = await sender.Send(new TokenProbe(substitute.Token), original.Token);
+
+        Assert.True(received == substitute.Token, "next() with no token should keep the token that behavior received, not fall back to the original");
     }
 }

@@ -40,19 +40,7 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     {
         var handler = provider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
 
-        // Every delegate ignores its own token argument and uses the original one captured
-        // from Send, so cancellation propagates even when a behavior calls next() with no args.
-        RequestHandlerDelegate<TResponse> next = _ => handler.Handle(request, cancellationToken);
-
-        // Reverse so the first-registered behavior ends up outermost (matches MediatR ordering).
-        foreach (var behavior in provider.GetServices<IPipelineBehavior<TRequest, TResponse>>().Reverse())
-        {
-            var behaviorLocal = behavior;
-            var nextLocal = next;
-            next = _ => behaviorLocal.Handle(request, nextLocal, cancellationToken);
-        }
-
-        return next(cancellationToken);
+        return Pipeline.Run<TRequest, TResponse>(request, provider, handler.Handle, cancellationToken);
     }
 }
 
@@ -83,20 +71,60 @@ internal sealed class VoidRequestHandlerWrapperImpl<TRequest> : VoidRequestHandl
 
         // Void requests run through the same pipeline with TResponse == Unit, so the existing
         // IPipelineBehavior<TRequest, Unit> registrations apply unchanged.
-        RequestHandlerDelegate<Unit> next = async _ =>
-        {
-            await handler.Handle(request, cancellationToken);
-            return Unit.Value;
-        };
+        return Pipeline.Run<TRequest, Unit>(
+            request,
+            provider,
+            async (r, ct) =>
+            {
+                await handler.Handle(r, ct);
+                return Unit.Value;
+            },
+            cancellationToken);
+    }
+}
 
-        foreach (var behavior in provider.GetServices<IPipelineBehavior<TRequest, Unit>>().Reverse())
+// --- Behavior pipeline -----------------------------------------------------
+
+internal static class Pipeline
+{
+    /// <summary>
+    /// Runs <paramref name="handler"/> inside the behaviors registered for the request, the first one
+    /// registered outermost (MediatR ordering).
+    /// </summary>
+    /// <remarks>
+    /// The token a behavior passes to <c>next</c> is what everything inside it receives, so a behavior can
+    /// substitute a linked token of its own. Calling <c>next()</c> with no token (or <see langword="default"/>)
+    /// keeps the token that behavior itself received, so cancellation is never lost and a substituted token
+    /// survives an inner behavior that forwards nothing.
+    /// </remarks>
+    public static Task<TResponse> Run<TRequest, TResponse>(
+        TRequest request,
+        IServiceProvider provider,
+        Func<TRequest, CancellationToken, Task<TResponse>> handler,
+        CancellationToken cancellationToken)
+    {
+        var registered = provider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
+        var behaviors = registered as IPipelineBehavior<TRequest, TResponse>[] ?? registered.ToArray();
+
+        return Invoke(request, behaviors, 0, handler, cancellationToken);
+    }
+
+    private static Task<TResponse> Invoke<TRequest, TResponse>(
+        TRequest request,
+        IPipelineBehavior<TRequest, TResponse>[] behaviors,
+        int index,
+        Func<TRequest, CancellationToken, Task<TResponse>> handler,
+        CancellationToken cancellationToken)
+    {
+        if (index == behaviors.Length)
         {
-            var behaviorLocal = behavior;
-            var nextLocal = next;
-            next = _ => behaviorLocal.Handle(request, nextLocal, cancellationToken);
+            return handler(request, cancellationToken);
         }
 
-        return next(cancellationToken);
+        return behaviors[index].Handle(
+            request,
+            token => Invoke(request, behaviors, index + 1, handler, token == default ? cancellationToken : token),
+            cancellationToken);
     }
 }
 

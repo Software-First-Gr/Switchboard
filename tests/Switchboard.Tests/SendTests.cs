@@ -1,9 +1,26 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Switchboard.Tests;
+
+public interface IOutcome
+{
+    string Description { get; }
+}
+
+public sealed record OrderPlaced(string Description) : IOutcome;
+
+/// <summary>Declares a concrete response; <c>IRequest&lt;out T&gt;</c> makes it an <c>IRequest&lt;IOutcome&gt;</c> too.</summary>
+public sealed record PlaceOrder : IRequest<OrderPlaced>;
+
+public sealed class PlaceOrderHandler : IRequestHandler<PlaceOrder, OrderPlaced>
+{
+    public Task<OrderPlaced> Handle(PlaceOrder request, CancellationToken cancellationToken)
+        => Task.FromResult(new OrderPlaced("placed"));
+}
 
 public sealed class SendTests
 {
@@ -80,6 +97,31 @@ public sealed class SendTests
         await Assert.ThrowsAsync<ArgumentNullException>(() => sender.Send((object)null!));
         await Assert.ThrowsAsync<ArgumentNullException>(() => sender.Send((IRequest<string>)null!));
         await Assert.ThrowsAsync<ArgumentNullException>(() => sender.Send((FireAndForget)null!));
+    }
+
+    [Fact]
+    public async Task Send_through_a_covariant_request_type_runs_the_declared_handler()
+    {
+        await using var provider = BuildProvider();
+        var sender = provider.GetRequiredService<ISender>();
+        IRequest<IOutcome> request = new PlaceOrder();
+
+        var outcome = await sender.Send(request);
+
+        Assert.Equal("placed", Assert.IsType<OrderPlaced>(outcome).Description);
+    }
+
+    [Fact]
+    public async Task A_covariant_send_does_not_break_later_sends_of_the_same_request()
+    {
+        await using var provider = BuildProvider();
+        var sender = provider.GetRequiredService<ISender>();
+
+        // Used to cache a wrapper for IRequestHandler<PlaceOrder, object> under PlaceOrder, for the life of the process.
+        await sender.Send<object>(new PlaceOrder());
+
+        Assert.Equal("placed", (await sender.Send(new PlaceOrder())).Description);
+        Assert.IsType<OrderPlaced>(await sender.Send((object)new PlaceOrder()));
     }
 
     [Fact]

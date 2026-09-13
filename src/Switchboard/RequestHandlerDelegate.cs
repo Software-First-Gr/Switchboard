@@ -9,8 +9,9 @@ namespace Switchboard;
 /// </summary>
 /// <typeparam name="TResponse">The response type produced by the pipeline.</typeparam>
 /// <param name="cancellationToken">
-/// Optional token. Regardless of what is passed here, the pipeline propagates the token originally
-/// given to <c>Send</c>, so calling <c>next()</c> with no arguments never loses cancellation.
+/// Optional. Pass a token to hand the rest of the pipeline a different one, e.g. a linked token that adds
+/// a timeout. Pass nothing (or <see langword="default"/>) to keep the token this behavior received, so
+/// calling <c>next()</c> with no arguments never loses cancellation.
 /// </param>
 /// <returns>The response produced by the rest of the pipeline.</returns>
 public delegate Task<TResponse> RequestHandlerDelegate<TResponse>(CancellationToken cancellationToken = default);

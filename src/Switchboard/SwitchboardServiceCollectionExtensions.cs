@@ -27,7 +27,9 @@ public static class SwitchboardServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Safe to call more than once, e.g. from several modules scanning a shared assembly: a handler or
-    /// behavior already registered is not registered again, so it never runs twice.
+    /// behavior already registered is not registered again, so it never runs twice. A later call may switch
+    /// on scope-per-dispatch or add its callback; the last callback configured wins, and a bare
+    /// <see cref="SwitchboardConfiguration.UseScopePerDispatch()"/> never removes one configured earlier.
     /// </remarks>
     public static IServiceCollection AddSwitchboard(this IServiceCollection services, Action<SwitchboardConfiguration> configure)
     {
@@ -44,7 +46,18 @@ public static class SwitchboardServiceCollectionExtensions
 
         if (configuration.ScopePerDispatch is { } scopePerDispatch)
         {
-            services.TryAddSingleton(scopePerDispatch);
+            // A later AddSwitchboard call (the host layer adding the current-user callback, say) may add or
+            // replace the callback, but a bare UseScopePerDispatch() must never remove one configured elsewhere.
+            var alreadyConfigured = services.Any(d => d.ServiceType == typeof(DispatchScopeOptions));
+
+            if (!alreadyConfigured)
+            {
+                services.AddSingleton(scopePerDispatch);
+            }
+            else if (scopePerDispatch.OnScopeCreated is not null)
+            {
+                services.Replace(ServiceDescriptor.Singleton(scopePerDispatch));
+            }
         }
 
         var scanned = ScannedAssemblies.GetOrCreateValue(services);

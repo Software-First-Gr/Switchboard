@@ -1,9 +1,23 @@
 using System;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Switchboard.Tests;
+
+/// <summary>Implements the behavior interface, but the container cannot close a one-parameter type over (TRequest, TResponse).</summary>
+public sealed class OneParameterBehavior<TRequest> : IPipelineBehavior<TRequest, Unit>
+{
+    public Task<Unit> Handle(TRequest request, RequestHandlerDelegate<Unit> next, CancellationToken cancellationToken) => next(cancellationToken);
+}
+
+/// <summary>Implements the behavior interface, but the container cannot close a three-parameter type over (TRequest, TResponse).</summary>
+public sealed class ThreeParameterBehavior<TRequest, TResponse, TExtra> : IPipelineBehavior<TRequest, TResponse>
+{
+    public Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken) => next(cancellationToken);
+}
 
 public sealed class RegistrationTests
 {
@@ -94,6 +108,20 @@ public sealed class RegistrationTests
             () => services.AddSwitchboard(cfg => cfg.AddOpenBehavior(typeof(string))));
         Assert.Throws<ArgumentException>(
             () => services.AddSwitchboard(cfg => cfg.AddOpenBehavior(typeof(ShortCircuitBehavior))));
+    }
+
+    [Fact]
+    public void AddOpenBehavior_rejects_open_generics_the_container_could_not_close()
+    {
+        var services = new ServiceCollection();
+
+        var one = Assert.Throws<ArgumentException>(
+            () => services.AddSwitchboard(cfg => cfg.AddOpenBehavior(typeof(OneParameterBehavior<>))));
+        var three = Assert.Throws<ArgumentException>(
+            () => services.AddSwitchboard(cfg => cfg.AddOpenBehavior(typeof(ThreeParameterBehavior<,,>))));
+
+        Assert.Contains("two type parameters", one.Message);
+        Assert.Contains("two type parameters", three.Message);
     }
 
     [Fact]

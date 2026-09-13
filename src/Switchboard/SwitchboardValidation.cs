@@ -190,6 +190,12 @@ public static class SwitchboardValidationExtensions
     {
         var parameters = openType.GetGenericArguments();
 
+        // Wrong arity: the container cannot close it either, and reports that itself when the provider is built.
+        if (parameters.Length != arguments.Length)
+        {
+            return false;
+        }
+
         for (var i = 0; i < parameters.Length; i++)
         {
             var argument = arguments[i];

@@ -17,7 +17,9 @@ public sealed class Mediator : IMediator
     private readonly DispatchScopeOptions? _scopePerDispatch;
 
     // Closed wrappers are cached per request/notification type; they are stateless and thread-safe.
-    private static readonly ConcurrentDictionary<Type, RequestHandlerWrapperBase> RequestWrappers = new();
+    // A typed request's wrapper is built for the response type the request declares through IRequest<TResponse>,
+    // never for the type argument of one particular Send call; null is cached for a type that declares none.
+    private static readonly ConcurrentDictionary<Type, RequestHandlerWrapperBase?> RequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, VoidRequestHandlerWrapper> VoidRequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> NotificationWrappers = new();
 
@@ -38,12 +40,19 @@ public sealed class Mediator : IMediator
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var wrapper = (RequestHandlerWrapper<TResponse>)RequestWrappers.GetOrAdd(
-            request.GetType(),
-            requestType => (RequestHandlerWrapperBase)Activator.CreateInstance(
-                typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(requestType, typeof(TResponse)))!);
+        // Never null here: the static type guarantees the runtime type declares an IRequest<T>.
+        var wrapper = TypedRequestWrapper(request.GetType())!;
 
-        return Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
+        if (wrapper is RequestHandlerWrapper<TResponse> exact)
+        {
+            return Dispatch(exact, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
+        }
+
+        // IRequest<out TResponse> is covariant, so GetOrder : IRequest<OrderDto> can be sent as IRequest<object>.
+        // The handler is still the one registered for OrderDto; only the response is converted. Building the
+        // wrapper from the call's type argument instead would look for IRequestHandler<GetOrder, object> and,
+        // worse, cache that wrapper for every later Send of GetOrder.
+        return SendCovariant<TResponse>(wrapper, request, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -52,12 +61,7 @@ public sealed class Mediator : IMediator
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var wrapper = VoidRequestWrappers.GetOrAdd(
-            request.GetType(),
-            static requestType => (VoidRequestHandlerWrapper)Activator.CreateInstance(
-                typeof(VoidRequestHandlerWrapperImpl<>).MakeGenericType(requestType))!);
-
-        return Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
+        return Dispatch(VoidRequestWrapper(request.GetType()), request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
     }
 
     /// <inheritdoc />
@@ -65,35 +69,19 @@ public sealed class Mediator : IMediator
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var requestType = request.GetType();
-        var responseInterface = Array.Find(
-            requestType.GetInterfaces(),
-            i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequest<>));
-
-        if (responseInterface is not null)
+        if (request is IBaseRequest && TypedRequestWrapper(request.GetType()) is { } wrapper)
         {
-            var responseType = responseInterface.GetGenericArguments()[0];
-            var wrapper = RequestWrappers.GetOrAdd(
-                requestType,
-                rt => (RequestHandlerWrapperBase)Activator.CreateInstance(
-                    typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(rt, responseType))!);
-
             return await Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.HandleUntyped(r, sp, ct));
         }
 
         if (request is IRequest)
         {
-            var wrapper = VoidRequestWrappers.GetOrAdd(
-                requestType,
-                static rt => (VoidRequestHandlerWrapper)Activator.CreateInstance(
-                    typeof(VoidRequestHandlerWrapperImpl<>).MakeGenericType(rt))!);
-
-            await Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
+            await Dispatch(VoidRequestWrapper(request.GetType()), request, cancellationToken, static (w, r, sp, ct) => w.Handle(r, sp, ct));
             return null;
         }
 
         throw new ArgumentException(
-            $"{requestType} does not implement {nameof(IRequest)} or {typeof(IRequest<>).Name}", nameof(request));
+            $"{request.GetType()} does not implement {nameof(IRequest)} or {typeof(IRequest<>).Name}", nameof(request));
     }
 
     /// <inheritdoc />
@@ -127,6 +115,27 @@ public sealed class Mediator : IMediator
 
         return Dispatch(wrapper, notification, cancellationToken, static (w, n, sp, ct) => w.Handle(n, sp, ct));
     }
+
+    private async Task<TResponse> SendCovariant<TResponse>(RequestHandlerWrapperBase wrapper, object request, CancellationToken cancellationToken)
+        => (TResponse)(await Dispatch(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.HandleUntyped(r, sp, ct)))!;
+
+    /// <summary>The wrapper for the response type <paramref name="requestType"/> declares, or <see langword="null"/> when it declares none.</summary>
+    private static RequestHandlerWrapperBase? TypedRequestWrapper(Type requestType)
+        => RequestWrappers.GetOrAdd(requestType, static type =>
+        {
+            var declared = Array.Find(
+                type.GetInterfaces(),
+                i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequest<>));
+
+            return declared is null
+                ? null
+                : (RequestHandlerWrapperBase)Activator.CreateInstance(
+                    typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(type, declared.GetGenericArguments()[0]))!;
+        });
+
+    private static VoidRequestHandlerWrapper VoidRequestWrapper(Type requestType)
+        => VoidRequestWrappers.GetOrAdd(requestType, static type => (VoidRequestHandlerWrapper)Activator.CreateInstance(
+            typeof(VoidRequestHandlerWrapperImpl<>).MakeGenericType(type))!);
 
     /// <summary>
     /// Picks the provider the message is handled from: the caller's scope by default, or — with

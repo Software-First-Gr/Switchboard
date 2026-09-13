@@ -339,7 +339,7 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 }));
 ```
 
-`AddSwitchboard` is safe to call again for this, so you can put it in the host or infrastructure layer without touching your application layer's registration. Port the decorator's tests too, especially for identity: the callback is where the user carries over. See [Scope per dispatch](#scope-per-dispatch-blazor-server).
+`AddSwitchboard` is safe to call again for this, so you can put it in the host or infrastructure layer without touching your application layer's registration: the last callback configured wins, and a bare `UseScopePerDispatch()` elsewhere never removes it. Port the decorator's tests too, especially for identity: the callback is where the user carries over. See [Scope per dispatch](#scope-per-dispatch-blazor-server).
 
 ## Migrating from MediatR
 
@@ -366,7 +366,8 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 
 ## Semantics worth knowing
 
-- **Cancellation is never lost.** The `CancellationToken` passed to `Send` flows to every behavior and the handler, even when a behavior calls `next()` without arguments.
+- **Cancellation is never lost.** The `CancellationToken` passed to `Send` flows to every behavior and the handler, even when a behavior calls `next()` without arguments. A behavior that passes a token of its own to `next` (a linked token with a timeout, say) hands it to everything inside it.
+- **Covariant sends work.** `IRequest<out TResponse>` is covariant, so a `GetOrder : IRequest<OrderDto>` can be sent as `IRequest<object>` or through a base interface of `OrderDto`; the handler registered for `OrderDto` runs and its response is converted.
 - **Handlers and behaviors are transient**; they are resolved from the scope the mediator was resolved from (or the per-dispatch scope, when enabled), so scoped dependencies work as expected.
 - **`AddSwitchboard` is safe to call more than once.** A handler or behavior that is already registered is not added again, so modules that scan a shared assembly never make a handler run twice.
 - **Publishing to zero handlers** is a no-op, mirroring MediatR.

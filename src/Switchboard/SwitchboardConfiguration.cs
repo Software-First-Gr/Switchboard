@@ -44,16 +44,22 @@ public sealed class SwitchboardConfiguration
     /// Registers an open-generic pipeline behavior, e.g. <c>typeof(ValidationBehaviour&lt;,&gt;)</c>.
     /// Order matters: the first behavior added runs outermost.
     /// </summary>
+    /// <remarks>
+    /// The behavior must have exactly two type parameters, <c>TRequest</c> and <c>TResponse</c>: the container
+    /// closes it with the two type arguments of <see cref="IPipelineBehavior{TRequest,TResponse}"/>.
+    /// </remarks>
     public SwitchboardConfiguration AddOpenBehavior(Type openBehaviorType)
     {
         ArgumentNullException.ThrowIfNull(openBehaviorType);
 
         if (!openBehaviorType.IsGenericTypeDefinition ||
+            openBehaviorType.GetGenericArguments().Length != 2 ||
             !openBehaviorType.GetInterfaces().Any(
                 i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>)))
         {
             throw new ArgumentException(
-                $"{openBehaviorType} must be an open generic type implementing IPipelineBehavior<,>",
+                $"{openBehaviorType} must be an open generic type with two type parameters, TRequest and TResponse, " +
+                "implementing IPipelineBehavior<,>",
                 nameof(openBehaviorType));
         }
 
@@ -97,10 +103,16 @@ public sealed class SwitchboardConfiguration
     /// <c>DbContext</c> fails with "a second operation was started on this context".
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A handler that sends or publishes again through its injected <see cref="ISender"/> or
     /// <see cref="IPublisher"/> reuses the scope already in flight, so nested work shares one unit of work.
     /// A mediator resolved from a scope you create yourself gets its own dispatch scope instead.
     /// Work that outlives the dispatch (fire-and-forget) must not reuse it.
+    /// </para>
+    /// <para>
+    /// When several <c>AddSwitchboard</c> calls configure this, the last callback configured wins, and a call
+    /// without a callback never removes one configured elsewhere.
+    /// </para>
     /// </remarks>
     public SwitchboardConfiguration UseScopePerDispatch()
     {
