@@ -27,6 +27,9 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
 {
     private static readonly string RequestName = SwitchboardTelemetry.DisplayName(typeof(TRequest));
 
+    // One delegate for the life of the process, so resolving the handler late costs no allocation per dispatch.
+    private static readonly Func<TRequest, IServiceProvider, CancellationToken, Task<TResponse>> Innermost = ResolveAndHandle;
+
     public override async Task<object?> HandleUntyped(object request, IServiceProvider provider, CancellationToken cancellationToken)
         => await Handle(request, provider, cancellationToken);
 
@@ -45,14 +48,19 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
 
     private static Task<TResponse> Run(TRequest request, IServiceProvider provider, CancellationToken cancellationToken)
     {
-        var handler = provider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
         var behaviors = Pipeline.Behaviors<TRequest, TResponse>(provider);
 
         // No behaviors: call the handler directly, without a delegate.
         return behaviors.Length == 0
-            ? handler.Handle(request, cancellationToken)
-            : Pipeline.Invoke(request, behaviors, 0, handler.Handle, cancellationToken);
+            ? ResolveAndHandle(request, provider, cancellationToken)
+            : Pipeline.Invoke(request, behaviors, 0, provider, Innermost, cancellationToken);
     }
+
+    // The handler is resolved by the innermost step of the pipeline, never before it (MediatR ordering). A
+    // behavior that rejects the request never constructs the handler, and a behavior that catches, counts or
+    // times what is inside it sees a handler that is missing or cannot be constructed.
+    private static Task<TResponse> ResolveAndHandle(TRequest request, IServiceProvider provider, CancellationToken cancellationToken)
+        => provider.GetRequiredService<IRequestHandler<TRequest, TResponse>>().Handle(request, cancellationToken);
 }
 
 // --- Request wrappers (void / Unit) ----------------------------------------
@@ -66,6 +74,8 @@ internal sealed class VoidRequestHandlerWrapperImpl<TRequest> : VoidRequestHandl
     where TRequest : IRequest
 {
     private static readonly string RequestName = SwitchboardTelemetry.DisplayName(typeof(TRequest));
+
+    private static readonly Func<TRequest, IServiceProvider, CancellationToken, Task<Unit>> Innermost = ResolveAndHandle;
 
     public override Task<Unit> Handle(object request, IServiceProvider provider, CancellationToken cancellationToken)
     {
@@ -81,18 +91,18 @@ internal sealed class VoidRequestHandlerWrapperImpl<TRequest> : VoidRequestHandl
 
     private static Task<Unit> Run(TRequest request, IServiceProvider provider, CancellationToken cancellationToken)
     {
-        var handler = provider.GetRequiredService<IRequestHandler<TRequest>>();
         var behaviors = Pipeline.Behaviors<TRequest, Unit>(provider);
 
         // Void requests run through the same pipeline with TResponse == Unit, so the existing
         // IPipelineBehavior<TRequest, Unit> registrations apply unchanged.
         return behaviors.Length == 0
-            ? AsUnit(handler.Handle(request, cancellationToken))
-            : Pipeline.Invoke(request, behaviors, 0, AsUnitHandler(handler), cancellationToken);
+            ? ResolveAndHandle(request, provider, cancellationToken)
+            : Pipeline.Invoke(request, behaviors, 0, provider, Innermost, cancellationToken);
     }
 
-    private static Func<TRequest, CancellationToken, Task<Unit>> AsUnitHandler(IRequestHandler<TRequest> handler)
-        => (request, cancellationToken) => AsUnit(handler.Handle(request, cancellationToken));
+    // Resolved by the innermost step of the pipeline, never before it: see the typed wrapper.
+    private static Task<Unit> ResolveAndHandle(TRequest request, IServiceProvider provider, CancellationToken cancellationToken)
+        => AsUnit(provider.GetRequiredService<IRequestHandler<TRequest>>().Handle(request, cancellationToken));
 
     // A handler that completed synchronously costs no Task<Unit>: the cached one is returned.
     private static Task<Unit> AsUnit(Task task)
@@ -121,33 +131,42 @@ internal static class Pipeline
     /// the first one outermost (MediatR ordering).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The token a behavior passes to <c>next</c> is what everything inside it receives, so a behavior can
     /// substitute a linked token of its own. Calling <c>next()</c> with no token (or <see langword="default"/>)
     /// keeps the token that behavior itself received, so cancellation is never lost and a substituted token
     /// survives an inner behavior that forwards nothing.
+    /// </para>
+    /// <para>
+    /// <paramref name="handler"/> resolves the request handler from <paramref name="provider"/> itself, so
+    /// that happens when the innermost behavior calls <c>next</c> — each time it does — and not at all when
+    /// a behavior returns or throws without calling it.
+    /// </para>
     /// </remarks>
     public static Task<TResponse> Invoke<TRequest, TResponse>(
         TRequest request,
         IPipelineBehavior<TRequest, TResponse>[] behaviors,
         int index,
-        Func<TRequest, CancellationToken, Task<TResponse>> handler,
+        IServiceProvider provider,
+        Func<TRequest, IServiceProvider, CancellationToken, Task<TResponse>> handler,
         CancellationToken cancellationToken)
     {
         if (index == behaviors.Length)
         {
-            return handler(request, cancellationToken);
+            return handler(request, provider, cancellationToken);
         }
 
-        return behaviors[index].Handle(request, Next(request, behaviors, index + 1, handler, cancellationToken), cancellationToken);
+        return behaviors[index].Handle(request, Next(request, behaviors, index + 1, provider, handler, cancellationToken), cancellationToken);
     }
 
     private static RequestHandlerDelegate<TResponse> Next<TRequest, TResponse>(
         TRequest request,
         IPipelineBehavior<TRequest, TResponse>[] behaviors,
         int index,
-        Func<TRequest, CancellationToken, Task<TResponse>> handler,
+        IServiceProvider provider,
+        Func<TRequest, IServiceProvider, CancellationToken, Task<TResponse>> handler,
         CancellationToken received)
-        => token => Invoke(request, behaviors, index, handler, token == default ? received : token);
+        => token => Invoke(request, behaviors, index, provider, handler, token == default ? received : token);
 }
 
 // --- Notification wrapper --------------------------------------------------

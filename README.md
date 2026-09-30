@@ -8,6 +8,8 @@
 
 📖 Overview, migration guide and FAQ: **[softwarefirst.gr/switchboard](https://softwarefirst.gr/switchboard)**
 
+> **New in 1.3:** the handler is resolved inside the pipeline, as in MediatR, so behaviors run before it is constructed and see it fail when it can't be — see **[Upgrading to 1.3](#upgrading-to-13)**.
+>
 > **New in 1.2:** startup validation, built-in OpenTelemetry, scope per dispatch for Blazor Server, and a fix for handlers registered twice. It's a drop-in upgrade from 1.1 — see **[Upgrading to 1.2](#upgrading-to-12)** and the [changelog](CHANGELOG.md).
 
 Switchboard implements the request/response, notification, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 500 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
@@ -121,6 +123,8 @@ Open and closed behaviors share a single ordering, so the first one added is out
 `services.AddTransient<IPipelineBehavior<GetOrder, OrderDto>, MyBehavior>()`.
 
 Void requests run through the same pipeline with `TResponse == Unit`, so open-generic behaviors apply to them unchanged — as long as their constraints allow it (see below).
+
+The handler is resolved by the innermost `next()`, not before the pipeline starts, exactly as in MediatR. A behavior that rejects a request or answers it from a cache never constructs the handler, and a handler that is missing or can't be constructed fails inside the behaviors, where a logging or metrics behavior catches it like any other exception.
 
 ### Constrained behaviors
 
@@ -265,6 +269,16 @@ services.AddSwitchboard(cfg => cfg
 
 > Work that outlives the dispatch — `Task.Run` fire-and-forget started inside a handler — must not send through the mediator it inherited: the scope it would reuse is disposed when the outer dispatch completes. Create a scope of your own for background work.
 
+## Upgrading to 1.3
+
+1.3 changes no API. It changes one thing you can observe: the handler is now resolved inside the pipeline instead of before it. Bump the package, then check these three cases:
+
+| What changed | Who notices | What to do |
+| --- | --- | --- |
+| A missing or unconstructible handler now fails inside the behaviors. With an `async` behavior registered, it arrives through the returned `Task` instead of being thrown by `Send`. | Code that calls `Send` without `await` inside a `try`. | `await` the call. |
+| A behavior that catches every exception and returns a failure result now also catches a missing handler or an unresolvable dependency. | Apps with a result-returning exception behavior. | Run `ValidateSwitchboard()` at startup and in a test, so a missing handler never reaches production. |
+| The handler (and its dependencies) is constructed after the behaviors' "before" code, and again on each extra `next()` call. | A behavior that read state the handler's constructor set; a retry behavior with an expensive handler to build. | Move constructor side effects into `Handle`. |
+
 ## Upgrading to 1.2
 
 1.2 is a drop-in upgrade from 1.1: no API was removed or changed, so bumping the package is enough to compile and run. The new features are opt-in. The steps below take about fifteen minutes and are worth doing, because the validation tends to find something real.
@@ -368,6 +382,7 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 
 - **Cancellation is never lost.** The `CancellationToken` passed to `Send` flows to every behavior and the handler, even when a behavior calls `next()` without arguments. A behavior that passes a token of its own to `next` (a linked token with a timeout, say) hands it to everything inside it.
 - **Covariant sends work.** `IRequest<out TResponse>` is covariant, so a `GetOrder : IRequest<OrderDto>` can be sent as `IRequest<object>` or through a base interface of `OrderDto`; the handler registered for `OrderDto` runs and its response is converted.
+- **The handler is resolved when the innermost behavior calls `next()`**, after every behavior's "before" code, and not at all if a behavior never calls it.
 - **Handlers and behaviors are transient**; they are resolved from the scope the mediator was resolved from (or the per-dispatch scope, when enabled), so scoped dependencies work as expected.
 - **`AddSwitchboard` is safe to call more than once.** A handler or behavior that is already registered is not added again, so modules that scan a shared assembly never make a handler run twice.
 - **Publishing to zero handlers** is a no-op, mirroring MediatR.

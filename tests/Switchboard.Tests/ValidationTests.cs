@@ -98,7 +98,8 @@ public sealed class ValidationTests
 
         var error = Assert.Single(exception.Errors);
         Assert.StartsWith("TypedOnlyBehavior<TRequest, TResponse> never runs for", error);
-        Assert.Contains("VoidTracked", error);
+        // Only the first five are named, so which ones depends on how many void requests this assembly declares.
+        Assert.Matches(@"never runs for \d+ void request\(s\) \(\w+, ", error);
         Assert.Contains("IBaseRequest", error);
     }
 
