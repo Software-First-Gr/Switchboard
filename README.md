@@ -12,7 +12,7 @@
 >
 > **New in 1.2:** startup validation, built-in OpenTelemetry, scope per dispatch for Blazor Server, and a fix for handlers registered twice. It's a drop-in upgrade from 1.1 — see **[Upgrading to 1.2](#upgrading-to-12)** and the [changelog](CHANGELOG.md).
 
-Switchboard implements the request/response, notification, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 500 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
+Switchboard implements the request/response, notification, streaming, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 500 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
 
 ## Install
 
@@ -30,7 +30,7 @@ Same API, plus four things every one of our production apps ended up needing —
 | --- | --- |
 | A request with no handler (or two) is only discovered when a user hits it. | **[Startup validation](#startup-validation)** — `ValidateSwitchboard()` lists every missing and duplicate handler before the app serves a request, without constructing a single handler. |
 | A behavior constrained to `where TRequest : IRequest<TResponse>` — the shape most templates ship — **silently never runs for void commands**. Your exception logging and timing just aren't there. | **[The same validation](#the-void-request-trap)** names the behavior and every request it skips, and tells you the one-word fix. |
-| Every app writes its own `PerformanceBehaviour` to get spans and timings. | **[OpenTelemetry built in](#opentelemetry)** — a span per `Send`, per `Publish` and per notification handler, plus duration histograms. One `AddSource` line to switch on; zero cost when nobody listens. |
+| Every app writes its own `PerformanceBehaviour` to get spans and timings. | **[OpenTelemetry built in](#opentelemetry)** — a span per `Send`, per `CreateStream`, per `Publish` and per notification handler, plus duration histograms. One `AddSource` line to switch on; zero cost when nobody listens. |
 | In Blazor Server the DI scope is the whole circuit, so one `DbContext` serves every click: *"A second operation was started on this context"*. | **[Scope per dispatch](#scope-per-dispatch-blazor-server)** — each command gets its own scope and unit of work; nested commands share it; the current user is carried across. |
 
 It also fixes a trap common to hand-rolled registration: calling `AddSwitchboard` from two modules that scan the same assembly **no longer registers handlers twice** (which made every notification handler run twice).
@@ -45,7 +45,7 @@ Several MediatR alternatives exist now, and most compete on speed or feature cou
 - **A deliberately identical API surface** — the migration is a find-and-replace, not a rewrite.
 - **Apache 2.0**, extracted from a production system that made this exact switch.
 
-If you need streaming, parallel publish strategies, or maximum throughput, a source-generated alternative is the better fit — the [migration table](#migrating-from-mediatr) below says so explicitly.
+If you need parallel publish strategies or maximum throughput, a source-generated alternative is the better fit — the [migration table](#migrating-from-mediatr) below says so explicitly.
 
 ## Quick start
 
@@ -174,6 +174,59 @@ await publisher.Publish(new OrderPlaced(42), cancellationToken);
 
 Handlers run **sequentially, in registration order** — never in parallel — so they can safely share scoped state such as an EF Core `DbContext`.
 
+## Streaming
+
+A stream request is answered with an `IAsyncEnumerable<T>` instead of a single response — rows read from a database, lines from a file, progress updates — so the consumer handles each item as it arrives:
+
+```csharp
+public sealed record GetOrderLines(int OrderId) : IStreamRequest<OrderLine>;
+
+public sealed class GetOrderLinesHandler(AppDbContext db) : IStreamRequestHandler<GetOrderLines, OrderLine>
+{
+    public IAsyncEnumerable<OrderLine> Handle(GetOrderLines request, CancellationToken cancellationToken)
+        => db.OrderLines.Where(l => l.OrderId == request.OrderId).AsAsyncEnumerable();
+}
+```
+
+```csharp
+await foreach (var line in sender.CreateStream(new GetOrderLines(42), cancellationToken))
+{
+    // ...
+}
+```
+
+Stream handlers are picked up by the same assembly scanning. Stream behaviors wrap them the way pipeline behaviors wrap request handlers, outermost first in the order they are added, open and closed sharing one ordering. They see every item, so they can log, time, transform or filter the stream:
+
+```csharp
+public sealed class StreamLoggingBehaviour<TRequest, TResponse> : IStreamPipelineBehavior<TRequest, TResponse>
+{
+    public async IAsyncEnumerable<TResponse> Handle(
+        TRequest request, StreamHandlerDelegate<TResponse> next, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // before the first item
+        await foreach (var item in next().WithCancellation(cancellationToken))
+        {
+            yield return item; // or transform it, or skip it
+        }
+        // after the last item
+    }
+}
+```
+
+```csharp
+services.AddSwitchboard(cfg => cfg
+    .RegisterServicesFromAssemblyContaining<GetOrderLinesHandler>()
+    .AddOpenStreamBehavior(typeof(StreamLoggingBehaviour<,>)) // runs outermost
+    .AddStreamBehavior<RedactOrderLines>());                    // IStreamPipelineBehavior<GetOrderLines, OrderLine>
+```
+
+Stream behaviors are separate from pipeline behaviors, as in MediatR: an `IPipelineBehavior<,>` never runs for a stream, and an `IStreamPipelineBehavior<,>` never runs for a `Send`.
+
+- **Nothing runs until the stream is enumerated.** `CreateStream` returns at once; behaviors and the handler are resolved by the first `MoveNextAsync`, and the handler only once the innermost behavior enumerates `next()`. Enumerating the same stream twice dispatches the request twice.
+- **Both tokens are honored.** The token passed to `CreateStream` and any token passed through `WithCancellation` are combined, and the result reaches every behavior and the handler as their `cancellationToken` argument, even when a behavior enumerates `next()` without passing one. The handler's stream is always enumerated with it too, so a handler that returns a query, like the one above, is cancelled with the rest. Mark the token `[EnumeratorCancellation]` in your iterators, as in the behavior above, so a token a behavior passes to `next().WithCancellation(...)` — a linked one with a timeout, say — reaches them combined with the stream's.
+- **Errors surface while enumerating**, after the items yielded before them. A missing handler fails on the first `MoveNextAsync`, not in `CreateStream`.
+- **With [scope per dispatch](#scope-per-dispatch-blazor-server)**, the scope lives for the whole enumeration and is disposed when the stream ends, throws, or is abandoned — breaking out of `await foreach` disposes it. A `Send` or `CreateStream` through the handler's injected `ISender` joins that scope, before or after its first `yield`.
+
 ## Startup validation
 
 Call `ValidateSwitchboard()` after all registrations, just before building the provider:
@@ -196,8 +249,8 @@ Switchboard registration is invalid:
 
 | Check | Covers | Option to turn it off |
 | --- | --- | --- |
-| Missing handlers | Every concrete request type in the scanned assemblies | `RequireHandlerForEveryRequest` |
-| Duplicate handlers | Every handler registration, scanned or manual | `ForbidDuplicateHandlers` |
+| Missing handlers | Every concrete request and stream request type in the scanned assemblies | `RequireHandlerForEveryRequest` |
+| Duplicate handlers | Every request and stream request handler registration, scanned or manual | `ForbidDuplicateHandlers` |
 | Behaviors that skip void requests | Every open behavior, via `AddOpenBehavior` or registered directly | `ForbidBehaviorsThatSkipVoidRequests` |
 
 ```csharp
@@ -222,8 +275,11 @@ builder.Services.AddOpenTelemetry()
 | Span | When | Tags |
 | --- | --- | --- |
 | `Send GetOrder` | every `Send`, behaviors included | `switchboard.request` |
+| `CreateStream GetOrderLines` | every enumeration of a stream, from the first item requested until it ends, fails or is abandoned | `switchboard.request`, `switchboard.stream.items` (items yielded) |
 | `Publish OrderPlaced` | every `Publish` | `switchboard.notification` |
 | `Handle OrderPlaced` | each notification handler, as a child of its `Publish` | `switchboard.notification`, `switchboard.handler` |
+
+The `CreateStream` span is made current again before every step of the stream, so work the handler does between items — a query, a nested `Send` — is traced as its child, while the consumer's own code between items is not.
 
 A failure sets the span status to `Error`, adds `error.type` and an `exception` event. Cancellations are tagged with `error.type` but are not marked as errors — a user navigating away is not a failed handler.
 
@@ -232,6 +288,7 @@ A failure sets the span status to `Error`, adds `error.type` and an `exception` 
 | Instrument | Unit | Tags |
 | --- | --- | --- |
 | `switchboard.request.duration` | s | `switchboard.request`, `error.type` on failure |
+| `switchboard.stream.duration` | s | `switchboard.request`, `error.type` on failure |
 | `switchboard.notification.duration` | s | `switchboard.notification`, `error.type` on failure |
 
 Tag values are type names (`GetOrder`, `Envelope<Invoice>`), never request contents, so cardinality stays bounded and no personal data leaks into your telemetry.
@@ -248,7 +305,7 @@ services.AddSwitchboard(cfg => cfg
     .UseScopePerDispatch());
 ```
 
-- Every top-level `Send` and `Publish` runs in its **own DI scope**, disposed when it completes — one `DbContext`, one unit of work per operation.
+- Every top-level `Send` and `Publish` runs in its **own DI scope**, disposed when it completes — one `DbContext`, one unit of work per operation. A `CreateStream` gets one for each enumeration, disposed when the stream ends or is abandoned.
 - A handler that sends or publishes again through its injected `ISender`/`IPublisher` **reuses the scope in flight**, so nested commands (and domain events published from `SaveChanges`) share one `DbContext` and one transaction.
 - A scope you create yourself inside a handler stays yours: a mediator resolved from it gets its own dispatch scope, so deliberately isolated work is never folded back into the outer unit of work.
 - Concurrent dispatches from the same circuit never share a scope.
@@ -359,7 +416,7 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 
 1. Replace the `MediatR` package reference with `SoftwareFirst.Switchboard`.
 2. Replace `using MediatR;` with `using Switchboard;`.
-3. Replace `services.AddMediatR(...)` with `services.AddSwitchboard(...)` — the configuration methods (`RegisterServicesFromAssemblyContaining`, `RegisterServicesFromAssembly`, `AddOpenBehavior`) keep their names.
+3. Replace `services.AddMediatR(...)` with `services.AddSwitchboard(...)` — the configuration methods (`RegisterServicesFromAssemblyContaining`, `RegisterServicesFromAssembly`, `AddOpenBehavior`, `AddOpenStreamBehavior`, `AddStreamBehavior`) keep their names.
 4. Optionally add `services.ValidateSwitchboard()` before `Build()` — it tends to find something on the first run.
 
 | MediatR feature | Switchboard |
@@ -370,7 +427,7 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 | `ISender`, `IPublisher`, `IMediator`, `Unit` | ✅ identical |
 | Untyped `Send(object)` / `Publish(object)` | ✅ identical |
 | Assembly scanning for handlers | ✅ identical |
-| Streaming (`IStreamRequest<>`) | ❌ not implemented |
+| Streaming (`IStreamRequest<>`, `IStreamRequestHandler<,>`, `IStreamPipelineBehavior<,>`, `CreateStream`) | ✅ identical |
 | Request pre-/post-processors | ❌ use a pipeline behavior |
 | Exception handlers/actions (`IRequestExceptionHandler`) | ❌ use a pipeline behavior |
 | Custom publish strategies (parallel, etc.) | ❌ sequential only |
@@ -380,7 +437,7 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 
 ## Semantics worth knowing
 
-- **Cancellation is never lost.** The `CancellationToken` passed to `Send` flows to every behavior and the handler, even when a behavior calls `next()` without arguments. A behavior that passes a token of its own to `next` (a linked token with a timeout, say) hands it to everything inside it.
+- **Cancellation is never lost.** The `CancellationToken` passed to `Send` flows to every behavior and the handler, even when a behavior calls `next()` without arguments. A behavior that passes a token of its own to `next` (a linked token with a timeout, say) hands it to everything inside it. Streams get the same guarantee for both the `CreateStream` token and the `WithCancellation` one — see [Streaming](#streaming).
 - **Covariant sends work.** `IRequest<out TResponse>` is covariant, so a `GetOrder : IRequest<OrderDto>` can be sent as `IRequest<object>` or through a base interface of `OrderDto`; the handler registered for `OrderDto` runs and its response is converted.
 - **The handler is resolved when the innermost behavior calls `next()`**, after every behavior's "before" code, and not at all if a behavior never calls it.
 - **Handlers and behaviors are transient**; they are resolved from the scope the mediator was resolved from (or the per-dispatch scope, when enabled), so scoped dependencies work as expected.

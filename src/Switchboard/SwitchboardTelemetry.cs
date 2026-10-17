@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Switchboard;
@@ -14,7 +17,7 @@ namespace Switchboard;
 /// </summary>
 public static class SwitchboardTelemetry
 {
-    /// <summary>Name of the <see cref="ActivitySource"/> emitting one span per send, publish and notification handler.</summary>
+    /// <summary>Name of the <see cref="ActivitySource"/> emitting one span per send, stream, publish and notification handler.</summary>
     public const string ActivitySourceName = "Switchboard";
 
     /// <summary>Name of the <see cref="Meter"/> emitting the duration histograms.</summary>
@@ -23,6 +26,12 @@ public static class SwitchboardTelemetry
     /// <summary>Histogram of <c>Send</c> durations in seconds, tagged with <c>switchboard.request</c> and, on failure, <c>error.type</c>.</summary>
     public const string RequestDurationInstrument = "switchboard.request.duration";
 
+    /// <summary>
+    /// Histogram of <c>CreateStream</c> durations in seconds, from the first item requested until the stream ends, fails or
+    /// is abandoned, the consumer's time between items included. Tagged with <c>switchboard.request</c> and, on failure, <c>error.type</c>.
+    /// </summary>
+    public const string StreamDurationInstrument = "switchboard.stream.duration";
+
     /// <summary>Histogram of <c>Publish</c> durations in seconds, tagged with <c>switchboard.notification</c> and, on failure, <c>error.type</c>.</summary>
     public const string NotificationDurationInstrument = "switchboard.notification.duration";
 
@@ -30,6 +39,7 @@ public static class SwitchboardTelemetry
     internal const string NotificationTag = "switchboard.notification";
     internal const string HandlerTag = "switchboard.handler";
     internal const string ErrorTypeTag = "error.type";
+    internal const string StreamItemsTag = "switchboard.stream.items";
 
     private static readonly string? Version = typeof(SwitchboardTelemetry).Assembly.GetName().Version?.ToString();
 
@@ -39,10 +49,15 @@ public static class SwitchboardTelemetry
     private static readonly Histogram<double> RequestDuration = Meter.CreateHistogram<double>(
         RequestDurationInstrument, unit: "s", description: "Duration of requests sent through Switchboard, pipeline behaviors included.");
 
+    private static readonly Histogram<double> StreamDuration = Meter.CreateHistogram<double>(
+        StreamDurationInstrument, unit: "s", description: "Duration of streams created through Switchboard, from the first item requested until the stream ends.");
+
     private static readonly Histogram<double> NotificationDuration = Meter.CreateHistogram<double>(
         NotificationDurationInstrument, unit: "s", description: "Duration of notifications published through Switchboard, all handlers included.");
 
     internal static bool IsRequestObserved => Source.HasListeners() || RequestDuration.Enabled;
+
+    internal static bool IsStreamObserved => Source.HasListeners() || StreamDuration.Enabled;
 
     internal static bool IsNotificationObserved => Source.HasListeners() || NotificationDuration.Enabled;
 
@@ -51,6 +66,71 @@ public static class SwitchboardTelemetry
 
     internal static Task<T> ObserveNotification<T>(string notificationName, Func<Task<T>> run)
         => Observe("Publish", NotificationTag, notificationName, NotificationDuration, run);
+
+    /// <summary>
+    /// Wraps <paramref name="items"/> in a <c>CreateStream</c> span and duration measurement that start with the first
+    /// item requested and end when the stream completes, fails, or is disposed early.
+    /// </summary>
+    internal static async IAsyncEnumerable<T> ObserveStream<T>(
+        string requestName, IAsyncEnumerable<T> items, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var activity = Source.StartActivity("CreateStream " + requestName);
+        activity?.SetTag(RequestTag, requestName);
+
+        var started = Stopwatch.GetTimestamp();
+        string? errorType = null;
+        var count = 0;
+
+        try
+        {
+            await using var enumerator = items.GetAsyncEnumerator(cancellationToken);
+
+            while (true)
+            {
+                // An iterator resumes on its consumer's execution context after every yield, so the span is made
+                // current again before each step: whatever the handler does next is traced as its child.
+                if (activity is not null)
+                {
+                    Activity.Current = activity;
+                }
+
+                bool moved;
+                try
+                {
+                    moved = await enumerator.MoveNextAsync();
+                }
+                catch (Exception exception)
+                {
+                    errorType = exception.GetType().FullName;
+                    RecordException(activity, exception);
+                    throw;
+                }
+
+                if (!moved)
+                {
+                    break;
+                }
+
+                count++;
+                yield return enumerator.Current;
+            }
+        }
+        finally
+        {
+            activity?.SetTag(StreamItemsTag, count);
+
+            if (StreamDuration.Enabled)
+            {
+                var tags = new TagList { { RequestTag, requestName } };
+                if (errorType is not null)
+                {
+                    tags.Add(ErrorTypeTag, errorType);
+                }
+
+                StreamDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, tags);
+            }
+        }
+    }
 
     /// <summary>Starts a child span for one notification handler; <see langword="null"/> when nobody is listening.</summary>
     internal static Activity? StartHandler(string notificationName, Type handlerType)

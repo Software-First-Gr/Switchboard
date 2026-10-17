@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +24,7 @@ public sealed class Mediator : IMediator
     private static readonly ConcurrentDictionary<Type, RequestHandlerWrapperBase?> RequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, VoidRequestHandlerWrapper> VoidRequestWrappers = new();
     private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> NotificationWrappers = new();
+    private static readonly ConcurrentDictionary<Type, StreamRequestHandlerWrapper?> StreamWrappers = new();
 
     // The scope of the dispatch in flight on this async path, when scope-per-dispatch is on. A handler
     // that sends or publishes again through a mediator resolved in that scope reuses it, so the inner
@@ -85,6 +88,30 @@ public sealed class Mediator : IMediator
     }
 
     /// <inheritdoc />
+    public IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Never null here: the static type guarantees the runtime type declares an IStreamRequest<T>. The wrapper is the
+        // one for the declared item type; IStreamRequest<out T> and IAsyncEnumerable<out T> are both covariant, so a
+        // stream of OrderDto created through IStreamRequest<object> is already a stream of object, with no conversion.
+        var wrapper = StreamWrapper(request.GetType())!;
+
+        return Stream(wrapper, request, cancellationToken, static (w, r, sp, ct) => (IAsyncEnumerable<TResponse>)w.Handle(r, sp, ct));
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<object?> CreateStream(object request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var wrapper = StreamWrapper(request.GetType()) ?? throw new ArgumentException(
+            $"{request.GetType()} does not implement {typeof(IStreamRequest<>).Name}", nameof(request));
+
+        return Stream(wrapper, request, cancellationToken, static (w, r, sp, ct) => w.HandleUntyped(r, sp, ct));
+    }
+
+    /// <inheritdoc />
     public Task Publish(object notification, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(notification);
@@ -131,6 +158,20 @@ public sealed class Mediator : IMediator
                 ? null
                 : (RequestHandlerWrapperBase)Activator.CreateInstance(
                     typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(type, declared.GetGenericArguments()[0]))!;
+        });
+
+    /// <summary>The wrapper for the item type <paramref name="requestType"/> declares, or <see langword="null"/> when it declares none.</summary>
+    private static StreamRequestHandlerWrapper? StreamWrapper(Type requestType)
+        => StreamWrappers.GetOrAdd(requestType, static type =>
+        {
+            var declared = Array.Find(
+                type.GetInterfaces(),
+                i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IStreamRequest<>));
+
+            return declared is null
+                ? null
+                : (StreamRequestHandlerWrapper)Activator.CreateInstance(
+                    typeof(StreamRequestHandlerWrapperImpl<,>).MakeGenericType(type, declared.GetGenericArguments()[0]))!;
         });
 
     private static VoidRequestHandlerWrapper VoidRequestWrapper(Type requestType)
@@ -183,5 +224,58 @@ public sealed class Mediator : IMediator
         }
 
         return await invoke(wrapper, message, scope.ServiceProvider, cancellationToken);
+    }
+
+    /// <summary>
+    /// The streaming counterpart of <see cref="Dispatch"/>: picks the provider the same way, but a new scope lives
+    /// for the whole enumeration rather than for one call.
+    /// </summary>
+    private IAsyncEnumerable<TItem> Stream<TItem>(
+        StreamRequestHandlerWrapper wrapper,
+        object request,
+        CancellationToken cancellationToken,
+        Func<StreamRequestHandlerWrapper, object, IServiceProvider, CancellationToken, IAsyncEnumerable<TItem>> open)
+    {
+        if (_scopePerDispatch is null || ReferenceEquals(ActiveDispatchScope.Value, _provider))
+        {
+            return open(wrapper, request, _provider, cancellationToken);
+        }
+
+        return StreamInNewScope(_scopePerDispatch, wrapper, request, cancellationToken, open);
+    }
+
+    // The scope is created by the first MoveNextAsync and disposed when the stream ends, throws, or is disposed early
+    // (a consumer that breaks out of await foreach). A stream that is never enumerated never creates one.
+    private async IAsyncEnumerable<TItem> StreamInNewScope<TItem>(
+        DispatchScopeOptions options,
+        StreamRequestHandlerWrapper wrapper,
+        object request,
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        Func<StreamRequestHandlerWrapper, object, IServiceProvider, CancellationToken, IAsyncEnumerable<TItem>> open)
+    {
+        await using var scope = _provider.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+
+        ActiveDispatchScope.Value = scope.ServiceProvider;
+
+        if (options.OnScopeCreated is { } onScopeCreated)
+        {
+            await onScopeCreated(new DispatchScope(_provider, scope.ServiceProvider, request), cancellationToken);
+        }
+
+        await using var items = open(wrapper, request, scope.ServiceProvider, cancellationToken).GetAsyncEnumerator(cancellationToken);
+
+        while (true)
+        {
+            // An iterator resumes on its consumer's execution context after every yield, which does not carry the
+            // scope, so it is set again before each step for the handler's own sends to join it.
+            ActiveDispatchScope.Value = scope.ServiceProvider;
+
+            if (!await items.MoveNextAsync())
+            {
+                yield break;
+            }
+
+            yield return items.Current;
+        }
     }
 }

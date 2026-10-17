@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,4 +19,21 @@ public interface ISender
     /// Returns the response, or <see langword="null"/> for void requests.
     /// </summary>
     Task<object?> Send(object request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a stream of the items the request's handler yields, through the stream behavior pipeline.
+    /// Nothing runs until the stream is enumerated: behaviors and the handler are resolved by its first
+    /// <c>MoveNextAsync</c>, and each enumeration dispatches the request again.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="cancellationToken"/> and any token passed through <c>WithCancellation</c> both reach
+    /// every behavior and the handler.
+    /// </remarks>
+    IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a stream for a request whose type is only known at runtime, yielding its items as objects.
+    /// See <see cref="CreateStream{TResponse}"/>.
+    /// </summary>
+    IAsyncEnumerable<object?> CreateStream(object request, CancellationToken cancellationToken = default);
 }

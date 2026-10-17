@@ -15,15 +15,16 @@ public static class SwitchboardServiceCollectionExtensions
     {
         typeof(IRequestHandler<,>),
         typeof(IRequestHandler<>),
-        typeof(INotificationHandler<>)
+        typeof(INotificationHandler<>),
+        typeof(IStreamRequestHandler<,>)
     };
 
     // Every assembly scanned into a collection, across all AddSwitchboard calls, for ValidateSwitchboard.
     private static readonly ConditionalWeakTable<IServiceCollection, List<Assembly>> ScannedAssemblies = new();
 
     /// <summary>
-    /// Registers the mediator, all handlers found in the configured assemblies,
-    /// and the configured pipeline behaviors.
+    /// Registers the mediator, all handlers found in the configured assemblies (request, notification and
+    /// stream request handlers), and the configured pipeline and stream pipeline behaviors.
     /// </summary>
     /// <remarks>
     /// Safe to call more than once, e.g. from several modules scanning a shared assembly: a handler or
@@ -71,27 +72,33 @@ public static class SwitchboardServiceCollectionExtensions
             RegisterHandlers(services, assembly);
         }
 
-        // Registered in the order they were configured, so DI hands them back in that same
-        // order and the first one added ends up outermost — open and closed alike.
-        foreach (var behavior in configuration.Behaviors)
-        {
-            if (behavior.IsGenericTypeDefinition)
-            {
-                services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), behavior));
-                continue;
-            }
-
-            foreach (var closedInterface in SwitchboardConfiguration.ClosedBehaviorInterfaces(behavior))
-            {
-                services.TryAddEnumerable(ServiceDescriptor.Transient(closedInterface, behavior));
-            }
-        }
+        RegisterBehaviors(services, configuration.Behaviors, typeof(IPipelineBehavior<,>));
+        RegisterBehaviors(services, configuration.StreamBehaviors, typeof(IStreamPipelineBehavior<,>));
 
         return services;
     }
 
     internal static IReadOnlyList<Assembly>? GetScannedAssemblies(IServiceCollection services)
         => ScannedAssemblies.TryGetValue(services, out var assemblies) ? assemblies : null;
+
+    // Registered in the order they were configured, so DI hands them back in that same
+    // order and the first one added ends up outermost — open and closed alike.
+    private static void RegisterBehaviors(IServiceCollection services, List<Type> behaviors, Type behaviorInterface)
+    {
+        foreach (var behavior in behaviors)
+        {
+            if (behavior.IsGenericTypeDefinition)
+            {
+                services.TryAddEnumerable(ServiceDescriptor.Transient(behaviorInterface, behavior));
+                continue;
+            }
+
+            foreach (var closedInterface in SwitchboardConfiguration.ClosedBehaviorInterfaces(behavior, behaviorInterface))
+            {
+                services.TryAddEnumerable(ServiceDescriptor.Transient(closedInterface, behavior));
+            }
+        }
+    }
 
     private static void RegisterHandlers(IServiceCollection services, Assembly assembly)
     {

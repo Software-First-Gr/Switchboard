@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -115,6 +117,79 @@ internal sealed class VoidRequestHandlerWrapperImpl<TRequest> : VoidRequestHandl
     }
 }
 
+// --- Stream request wrapper ------------------------------------------------
+
+internal abstract class StreamRequestHandlerWrapper
+{
+    /// <summary>
+    /// The stream as an <c>IAsyncEnumerable&lt;TResponse&gt;</c> of the response type the request declares. Typed as
+    /// <see cref="object"/> so a covariant caller can cast it to the stream of a base type it asked for.
+    /// </summary>
+    public abstract object Handle(object request, IServiceProvider provider, CancellationToken cancellationToken);
+
+    public abstract IAsyncEnumerable<object?> HandleUntyped(object request, IServiceProvider provider, CancellationToken cancellationToken);
+}
+
+internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamRequestHandlerWrapper
+    where TRequest : IStreamRequest<TResponse>
+{
+    private static readonly string RequestName = SwitchboardTelemetry.DisplayName(typeof(TRequest));
+
+    private static readonly Func<TRequest, IServiceProvider, CancellationToken, IAsyncEnumerable<TResponse>> Innermost = ResolveAndEnumerate;
+
+    public override object Handle(object request, IServiceProvider provider, CancellationToken cancellationToken)
+    {
+        var items = Run((TRequest)request, provider, cancellationToken);
+
+        return SwitchboardTelemetry.IsStreamObserved
+            ? SwitchboardTelemetry.ObserveStream(RequestName, items, cancellationToken)
+            : items;
+    }
+
+    public override async IAsyncEnumerable<object?> HandleUntyped(
+        object request, IServiceProvider provider, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var item in ((IAsyncEnumerable<TResponse>)Handle(request, provider, cancellationToken)).WithCancellation(cancellationToken))
+        {
+            yield return item;
+        }
+    }
+
+    // An iterator, so nothing is resolved until the stream is enumerated, and the token everything inside receives
+    // also carries the one the consumer passed to WithCancellation.
+    private static async IAsyncEnumerable<TResponse> Run(
+        TRequest request, IServiceProvider provider, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var behaviors = Pipeline.StreamBehaviors<TRequest, TResponse>(provider);
+
+        var items = behaviors.Length == 0
+            ? ResolveAndHandle(request, provider, cancellationToken)
+            : Pipeline.InvokeStream(request, behaviors, 0, provider, Innermost, cancellationToken);
+
+        await foreach (var item in items.WithCancellation(cancellationToken))
+        {
+            yield return item;
+        }
+    }
+
+    // Resolved by the innermost step of the pipeline, never before it: see the typed request wrapper.
+    private static IAsyncEnumerable<TResponse> ResolveAndHandle(TRequest request, IServiceProvider provider, CancellationToken cancellationToken)
+        => provider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>().Handle(request, cancellationToken);
+
+    // Behind behaviors, the handler's stream is enumerated with the token whatever the innermost behavior passes on:
+    // a handler returning a query (EF Core's AsAsyncEnumerable) only sees the enumerator's token, and a behavior that
+    // enumerates next() without WithCancellation would otherwise leave it with none. A token the behavior does pass
+    // is combined with the stream's.
+    private static async IAsyncEnumerable<TResponse> ResolveAndEnumerate(
+        TRequest request, IServiceProvider provider, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var item in ResolveAndHandle(request, provider, cancellationToken).WithCancellation(cancellationToken))
+        {
+            yield return item;
+        }
+    }
+}
+
 // --- Behavior pipeline -----------------------------------------------------
 
 internal static class Pipeline
@@ -167,6 +242,39 @@ internal static class Pipeline
         Func<TRequest, IServiceProvider, CancellationToken, Task<TResponse>> handler,
         CancellationToken received)
         => token => Invoke(request, behaviors, index, provider, handler, token == default ? received : token);
+
+    /// <summary>The stream behaviors registered for the request, in registration order: the first one runs outermost.</summary>
+    public static IStreamPipelineBehavior<TRequest, TResponse>[] StreamBehaviors<TRequest, TResponse>(IServiceProvider provider)
+    {
+        var registered = provider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+        return registered as IStreamPipelineBehavior<TRequest, TResponse>[] ?? registered.ToArray();
+    }
+
+    /// <summary>
+    /// Streams <paramref name="handler"/> through <paramref name="behaviors"/> from <paramref name="index"/> on,
+    /// the first one outermost (MediatR ordering).
+    /// </summary>
+    /// <remarks>
+    /// Every behavior and the handler receive <paramref name="cancellationToken"/>, whether or not the behavior
+    /// outside them passes a token when it enumerates <c>next()</c>. As for requests, <paramref name="handler"/>
+    /// resolves the handler itself, so that happens when the innermost behavior calls <c>next</c>.
+    /// </remarks>
+    public static IAsyncEnumerable<TResponse> InvokeStream<TRequest, TResponse>(
+        TRequest request,
+        IStreamPipelineBehavior<TRequest, TResponse>[] behaviors,
+        int index,
+        IServiceProvider provider,
+        Func<TRequest, IServiceProvider, CancellationToken, IAsyncEnumerable<TResponse>> handler,
+        CancellationToken cancellationToken)
+    {
+        if (index == behaviors.Length)
+        {
+            return handler(request, provider, cancellationToken);
+        }
+
+        return behaviors[index].Handle(
+            request, () => InvokeStream(request, behaviors, index + 1, provider, handler, cancellationToken), cancellationToken);
+    }
 }
 
 // --- Notification wrapper --------------------------------------------------

@@ -4,6 +4,25 @@ All notable changes to Switchboard. The format follows [Keep a Changelog](https:
 
 For step-by-step upgrade instructions, see [Upgrading to 1.3](README.md#upgrading-to-13) and [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
+## [Unreleased]
+
+New API, so the next release is a minor one (1.4.0).
+
+### Added
+
+- **Streaming requests, with MediatR's API.** `IStreamRequest<TResponse>`, `IStreamRequestHandler<TRequest, TResponse>`, `IStreamPipelineBehavior<TRequest, TResponse>` and `StreamHandlerDelegate<TResponse>`, plus `ISender.CreateStream(IStreamRequest<TResponse>)` and the untyped `ISender.CreateStream(object)`, which yields the items as objects. MediatR code that uses them compiles unchanged.
+  - Assembly scanning registers stream handlers; `AddOpenStreamBehavior(Type)`, `AddStreamBehavior<TBehavior>()` and `AddStreamBehavior(Type)` register stream behaviors, the first one added outermost, deduplicated across `AddSwitchboard` calls like pipeline behaviors.
+  - Nothing runs until the stream is enumerated. The handler is resolved inside the pipeline, as for requests, so a behavior that answers the stream itself never constructs it.
+  - The `CreateStream` token and the `WithCancellation` token are combined and reach every behavior and the handler, and the handler's stream is always enumerated with them, even behind a behavior that enumerates `next()` without a token.
+  - With `UseScopePerDispatch`, each enumeration gets its own scope, disposed when the stream ends, throws or is abandoned. The handler's own `Send` and `CreateStream` calls join it, after a `yield` as well as before.
+  - A `CreateStream {Request}` span, current for the handler at every step but not for the consumer between items, tagged with `switchboard.request` and the number of items yielded (`switchboard.stream.items`), and a `switchboard.stream.duration` histogram.
+  - `ValidateSwitchboard()` reports stream requests with no handler and stream requests with two different handlers.
+
+### Behavior notes
+
+- **`ISender` (and so `IMediator`) has two new members.** A class of your own that implements either one, such as a decorator, must implement both `CreateStream` overloads (forwarding them to the inner sender is enough). Code that only calls the mediator is unaffected.
+- **One deliberate difference from MediatR, a fix:** a stream created through a covariant base type (`IStreamRequest<object>` for a request declaring `IStreamRequest<OrderDto>`) runs the `OrderDto` handler, as `Send` does since 1.2.2. MediatR looks for a handler of `object` items, fails, and caches that lookup, so every later `CreateStream` of the request throws `InvalidCastException`.
+
 ## [1.3.0] — 2026-09-30
 
 No API changes. The version is a minor one because when the handler is created, and where its failures surface, is observable.

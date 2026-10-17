@@ -9,10 +9,10 @@ namespace Switchboard;
 /// <summary>Which checks <see cref="SwitchboardValidationExtensions.ValidateSwitchboard"/> runs. All are on by default.</summary>
 public sealed class SwitchboardValidationOptions
 {
-    /// <summary>Every request type in a scanned assembly must have a handler.</summary>
+    /// <summary>Every request and stream request type in a scanned assembly must have a handler.</summary>
     public bool RequireHandlerForEveryRequest { get; set; } = true;
 
-    /// <summary>No request may have more than one handler (only the last one registered would ever run).</summary>
+    /// <summary>No request or stream request may have more than one handler (only the last one registered would ever run).</summary>
     public bool ForbidDuplicateHandlers { get; set; } = true;
 
     /// <summary>
@@ -39,8 +39,8 @@ public static class SwitchboardValidationExtensions
 {
     /// <summary>
     /// Checks the registrations without building the container or constructing a single handler, and
-    /// throws a <see cref="SwitchboardValidationException"/> listing every problem: requests with no
-    /// handler, requests with several, and open behaviors that never run for void requests.
+    /// throws a <see cref="SwitchboardValidationException"/> listing every problem: requests and stream requests
+    /// with no handler, requests and stream requests with several, and open behaviors that never run for void requests.
     /// Call it after all registrations, just before building the provider
     /// (e.g. <c>builder.Services.ValidateSwitchboard(); var app = builder.Build();</c>).
     /// </summary>
@@ -105,7 +105,8 @@ public static class SwitchboardValidationExtensions
         var handlerRegistrations = descriptors
             .Where(d => d.ServiceType.IsConstructedGenericType &&
                         d.ServiceType.GetGenericTypeDefinition() is var definition &&
-                        (definition == typeof(IRequestHandler<,>) || definition == typeof(IRequestHandler<>)))
+                        (definition == typeof(IRequestHandler<,>) || definition == typeof(IRequestHandler<>) ||
+                         definition == typeof(IStreamRequestHandler<,>)))
             .GroupBy(d => d.ServiceType);
 
         foreach (var group in handlerRegistrations)
@@ -153,8 +154,13 @@ public static class SwitchboardValidationExtensions
         }
     }
 
+    // Stream requests do not implement IBaseRequest (nor do they in MediatR), so they are recognized by their own interface.
     private static bool IsConcreteRequest(Type type)
-        => !type.IsAbstract && !type.IsInterface && !type.IsGenericTypeDefinition && typeof(IBaseRequest).IsAssignableFrom(type);
+        => !type.IsAbstract && !type.IsInterface && !type.IsGenericTypeDefinition &&
+           (typeof(IBaseRequest).IsAssignableFrom(type) || type.GetInterfaces().Any(IsStreamRequestInterface));
+
+    private static bool IsStreamRequestInterface(Type type)
+        => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IStreamRequest<>);
 
     private static IEnumerable<Type> HandlerServiceTypes(Type requestType)
     {
@@ -163,6 +169,11 @@ public static class SwitchboardValidationExtensions
             if (requestInterface.IsGenericType && requestInterface.GetGenericTypeDefinition() == typeof(IRequest<>))
             {
                 yield return typeof(IRequestHandler<,>).MakeGenericType(requestType, requestInterface.GetGenericArguments()[0]);
+            }
+
+            if (IsStreamRequestInterface(requestInterface))
+            {
+                yield return typeof(IStreamRequestHandler<,>).MakeGenericType(requestType, requestInterface.GetGenericArguments()[0]);
             }
         }
 

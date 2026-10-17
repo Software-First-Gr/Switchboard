@@ -18,6 +18,9 @@ public sealed class SwitchboardConfiguration
     /// </summary>
     internal List<Type> Behaviors { get; } = new();
 
+    /// <summary>Stream behaviors in the order they were added, open and closed generics interleaved, like <see cref="Behaviors"/>.</summary>
+    internal List<Type> StreamBehaviors { get; } = new();
+
     /// <summary>Set when <see cref="UseScopePerDispatch()"/> (or an overload) was called.</summary>
     internal DispatchScopeOptions? ScopePerDispatch { get; private set; }
 
@@ -50,20 +53,7 @@ public sealed class SwitchboardConfiguration
     /// </remarks>
     public SwitchboardConfiguration AddOpenBehavior(Type openBehaviorType)
     {
-        ArgumentNullException.ThrowIfNull(openBehaviorType);
-
-        if (!openBehaviorType.IsGenericTypeDefinition ||
-            openBehaviorType.GetGenericArguments().Length != 2 ||
-            !openBehaviorType.GetInterfaces().Any(
-                i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>)))
-        {
-            throw new ArgumentException(
-                $"{openBehaviorType} must be an open generic type with two type parameters, TRequest and TResponse, " +
-                "implementing IPipelineBehavior<,>",
-                nameof(openBehaviorType));
-        }
-
-        Behaviors.Add(openBehaviorType);
+        Behaviors.Add(RequireOpenBehavior(openBehaviorType, typeof(IPipelineBehavior<,>)));
         return this;
     }
 
@@ -82,17 +72,41 @@ public sealed class SwitchboardConfiguration
     /// </summary>
     public SwitchboardConfiguration AddBehavior(Type behaviorType)
     {
-        ArgumentNullException.ThrowIfNull(behaviorType);
+        Behaviors.Add(RequireClosedBehavior(behaviorType, typeof(IPipelineBehavior<,>), nameof(AddOpenBehavior)));
+        return this;
+    }
 
-        if (behaviorType.IsGenericTypeDefinition || !ClosedBehaviorInterfaces(behaviorType).Any())
-        {
-            throw new ArgumentException(
-                $"{behaviorType} must be a concrete type implementing a closed IPipelineBehavior<,>. " +
-                "Use AddOpenBehavior for open generic behaviors.",
-                nameof(behaviorType));
-        }
+    /// <summary>
+    /// Registers an open-generic stream pipeline behavior, e.g. <c>typeof(StreamLoggingBehaviour&lt;,&gt;)</c>, wrapped
+    /// around every <see cref="IStreamRequestHandler{TRequest,TResponse}"/>. Order matters: the first stream behavior
+    /// added runs outermost.
+    /// </summary>
+    /// <remarks>
+    /// The behavior must have exactly two type parameters, <c>TRequest</c> and <c>TResponse</c>: the container closes it
+    /// with the two type arguments of <see cref="IStreamPipelineBehavior{TRequest,TResponse}"/>.
+    /// </remarks>
+    public SwitchboardConfiguration AddOpenStreamBehavior(Type openBehaviorType)
+    {
+        StreamBehaviors.Add(RequireOpenBehavior(openBehaviorType, typeof(IStreamPipelineBehavior<,>)));
+        return this;
+    }
 
-        Behaviors.Add(behaviorType);
+    /// <summary>
+    /// Registers a closed stream pipeline behavior that applies to one specific request/item pair,
+    /// e.g. <c>AddStreamBehavior&lt;RedactOrderLines&gt;()</c> for <c>IStreamPipelineBehavior&lt;GetOrderLines, OrderLine&gt;</c>.
+    /// Order matters: the first stream behavior added runs outermost, counting open and closed ones together.
+    /// </summary>
+    /// <typeparam name="TBehavior">A concrete type implementing one or more closed <see cref="IStreamPipelineBehavior{TRequest,TResponse}"/> interfaces.</typeparam>
+    public SwitchboardConfiguration AddStreamBehavior<TBehavior>()
+        => AddStreamBehavior(typeof(TBehavior));
+
+    /// <summary>
+    /// Registers a closed stream pipeline behavior that applies to one specific request/item pair.
+    /// Order matters: the first stream behavior added runs outermost, counting open and closed ones together.
+    /// </summary>
+    public SwitchboardConfiguration AddStreamBehavior(Type behaviorType)
+    {
+        StreamBehaviors.Add(RequireClosedBehavior(behaviorType, typeof(IStreamPipelineBehavior<,>), nameof(AddOpenStreamBehavior)));
         return this;
     }
 
@@ -150,7 +164,42 @@ public sealed class SwitchboardConfiguration
         return this;
     }
 
-    internal static IEnumerable<Type> ClosedBehaviorInterfaces(Type behaviorType)
+    internal static IEnumerable<Type> ClosedBehaviorInterfaces(Type behaviorType, Type behaviorInterface)
         => behaviorType.GetInterfaces().Where(
-            i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+            i => i.IsGenericType && i.GetGenericTypeDefinition() == behaviorInterface);
+
+    private static Type RequireOpenBehavior(Type openBehaviorType, Type behaviorInterface)
+    {
+        ArgumentNullException.ThrowIfNull(openBehaviorType);
+
+        if (!openBehaviorType.IsGenericTypeDefinition ||
+            openBehaviorType.GetGenericArguments().Length != 2 ||
+            !ClosedBehaviorInterfaces(openBehaviorType, behaviorInterface).Any())
+        {
+            throw new ArgumentException(
+                $"{openBehaviorType} must be an open generic type with two type parameters, TRequest and TResponse, " +
+                $"implementing {Name(behaviorInterface)}",
+                nameof(openBehaviorType));
+        }
+
+        return openBehaviorType;
+    }
+
+    private static Type RequireClosedBehavior(Type behaviorType, Type behaviorInterface, string openAlternative)
+    {
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        if (behaviorType.IsGenericTypeDefinition || !ClosedBehaviorInterfaces(behaviorType, behaviorInterface).Any())
+        {
+            throw new ArgumentException(
+                $"{behaviorType} must be a concrete type implementing a closed {Name(behaviorInterface)}. " +
+                $"Use {openAlternative} for open generic behaviors.",
+                nameof(behaviorType));
+        }
+
+        return behaviorType;
+    }
+
+    // IPipelineBehavior`2 -> IPipelineBehavior<,>
+    private static string Name(Type openInterface) => openInterface.Name[..openInterface.Name.IndexOf('`')] + "<,>";
 }
