@@ -12,7 +12,7 @@
 >
 > **New in 1.2:** startup validation, built-in OpenTelemetry, scope per dispatch for Blazor Server, and a fix for handlers registered twice. It's a drop-in upgrade from 1.1 — see **[Upgrading to 1.2](#upgrading-to-12)** and the [changelog](CHANGELOG.md).
 
-Switchboard implements the request/response, notification, streaming, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 500 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
+Switchboard implements the request/response, notification, streaming, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 700 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
 
 ## Install
 
@@ -39,7 +39,7 @@ It also fixes a trap common to hand-rolled registration: calling `AddSwitchboard
 
 Several MediatR alternatives exist now, and most compete on speed or feature count. Switchboard competes on being small and safe:
 
-- **Under 500 lines of code**, across files you can read end to end in one sitting.
+- **Under 700 lines of code**, across files you can read end to end in one sitting.
 - **One dependency** — `Microsoft.Extensions.DependencyInjection.Abstractions`, floored at the lowest patch of each major so it never drags your other `Microsoft.Extensions.*` packages forward. Telemetry uses `ActivitySource` and `Meter` from the base class library.
 - **No source generators, analyzers, or build-time magic.** Plain reflection over the DI container, the way MediatR does it.
 - **A deliberately identical API surface** — the migration is a find-and-replace, not a rewrite.
