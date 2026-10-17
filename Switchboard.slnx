@@ -3,6 +3,7 @@
     <Project Path="src/Switchboard/Switchboard.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Switchboard.IntegrationTests/Switchboard.IntegrationTests.csproj" />
     <Project Path="tests/Switchboard.Tests/Switchboard.Tests.csproj" />
   </Folder>
 </Solution>
