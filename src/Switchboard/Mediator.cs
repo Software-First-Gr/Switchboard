@@ -226,11 +226,18 @@ public sealed class Mediator : IMediator
         return await invoke(wrapper, message, scope.ServiceProvider, cancellationToken);
     }
 
+    private IAsyncEnumerable<TItem> Stream<TItem>(
+        StreamRequestHandlerWrapper wrapper,
+        object request,
+        CancellationToken cancellationToken,
+        Func<StreamRequestHandlerWrapper, object, IServiceProvider, CancellationToken, IAsyncEnumerable<TItem>> open)
+        => new DispatchedStream<TItem>(this, wrapper, request, cancellationToken, open);
+
     /// <summary>
     /// The streaming counterpart of <see cref="Dispatch"/>: picks the provider the same way, but a new scope lives
     /// for the whole enumeration rather than for one call.
     /// </summary>
-    private IAsyncEnumerable<TItem> Stream<TItem>(
+    private IAsyncEnumerable<TItem> OpenStream<TItem>(
         StreamRequestHandlerWrapper wrapper,
         object request,
         CancellationToken cancellationToken,
@@ -277,5 +284,35 @@ public sealed class Mediator : IMediator
 
             yield return items.Current;
         }
+    }
+
+    // What CreateStream returns. Every enumeration dispatches the request afresh, from a new iterator: a C# iterator
+    // hands its own instance out again once it has finished on the thread that created it, even before it is
+    // disposed, so returning one directly would let an overlapping enumeration take over a finished one's state
+    // machine, yielding nothing or failing when the first consumer disposes it.
+    private sealed class DispatchedStream<TItem> : IAsyncEnumerable<TItem>
+    {
+        private readonly Mediator _mediator;
+        private readonly StreamRequestHandlerWrapper _wrapper;
+        private readonly object _request;
+        private readonly CancellationToken _cancellationToken;
+        private readonly Func<StreamRequestHandlerWrapper, object, IServiceProvider, CancellationToken, IAsyncEnumerable<TItem>> _open;
+
+        public DispatchedStream(
+            Mediator mediator,
+            StreamRequestHandlerWrapper wrapper,
+            object request,
+            CancellationToken cancellationToken,
+            Func<StreamRequestHandlerWrapper, object, IServiceProvider, CancellationToken, IAsyncEnumerable<TItem>> open)
+        {
+            _mediator = mediator;
+            _wrapper = wrapper;
+            _request = request;
+            _cancellationToken = cancellationToken;
+            _open = open;
+        }
+
+        public IAsyncEnumerator<TItem> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+            => _mediator.OpenStream(_wrapper, _request, _cancellationToken, _open).GetAsyncEnumerator(cancellationToken);
     }
 }
