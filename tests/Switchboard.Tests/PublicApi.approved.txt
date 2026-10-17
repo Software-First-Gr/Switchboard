@@ -30,8 +30,8 @@ public interface Switchboard.IRequestHandler<in TRequest, TResponse> where TRequ
 public interface Switchboard.IRequest<out TResponse> : Switchboard.IBaseRequest
 
 public interface Switchboard.ISender
-    public System.Collections.Generic.IAsyncEnumerable<TResponse> CreateStream<TResponse>(Switchboard.IStreamRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
-    public System.Collections.Generic.IAsyncEnumerable<object?> CreateStream(object request, System.Threading.CancellationToken cancellationToken = default)
+    public virtual System.Collections.Generic.IAsyncEnumerable<TResponse> CreateStream<TResponse>(Switchboard.IStreamRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
+    public virtual System.Collections.Generic.IAsyncEnumerable<object?> CreateStream(object request, System.Threading.CancellationToken cancellationToken = default)
     public System.Threading.Tasks.Task Send<TRequest>(TRequest request, System.Threading.CancellationToken cancellationToken = default) where TRequest : Switchboard.IRequest
     public System.Threading.Tasks.Task<TResponse> Send<TResponse>(Switchboard.IRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
     public System.Threading.Tasks.Task<object?> Send(object request, System.Threading.CancellationToken cancellationToken = default)

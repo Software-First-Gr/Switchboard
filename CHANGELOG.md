@@ -18,9 +18,13 @@ New API, so the next release is a minor one (1.4.0).
   - A `CreateStream {Request}` span, current for the handler at every step but not for the consumer between items, tagged with `switchboard.request` and the number of items yielded (`switchboard.stream.items`), and a `switchboard.stream.duration` histogram.
   - `ValidateSwitchboard()` reports stream requests with no handler and stream requests with two different handlers.
 
+### Changed
+
+- **Breaking changes now fail the build.** `dotnet pack` validates the package against the published 1.3.0 (`PackageValidationBaselineVersion`), parameter renames included, and a public API snapshot test (`PublicApi.approved.txt`) fails on any change to the public surface until it is accepted with `SWITCHBOARD_ACCEPT_API=1 dotnet test`.
+
 ### Behavior notes
 
-- **`ISender` (and so `IMediator`) has two new members.** A class of your own that implements either one, such as a decorator, must implement both `CreateStream` overloads (forwarding them to the inner sender is enough). Code that only calls the mediator is unaffected.
+- **`ISender` (and so `IMediator`) has two new members, with default implementations, so nothing breaks.** A class of your own that implements either one, such as a decorator, keeps compiling and running unchanged. Calling `CreateStream` through it throws a `NotSupportedException` naming the class, until it implements both overloads (forwarding them to the sender it wraps is enough). The release is binary- and source-compatible with 1.3.0; pack now checks that (see Changed).
 - **One deliberate difference from MediatR, a fix:** a stream created through a covariant base type (`IStreamRequest<object>` for a request declaring `IStreamRequest<OrderDto>`) runs the `OrderDto` handler, as `Send` does since 1.2.2. MediatR looks for a handler of `object` items, fails, and caches that lookup, so every later `CreateStream` of the request throws `InvalidCastException`.
 
 ## [1.3.0] — 2026-09-30
