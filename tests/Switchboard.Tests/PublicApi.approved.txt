@@ -1,0 +1,107 @@
+public sealed class Switchboard.DispatchScope
+    public object Message { get; }
+    public System.IServiceProvider Parent { get; }
+    public System.IServiceProvider ServiceProvider { get; }
+
+public interface Switchboard.IBaseRequest
+
+public interface Switchboard.IMediator : Switchboard.IPublisher, Switchboard.ISender
+
+public interface Switchboard.INotification
+
+public interface Switchboard.INotificationHandler<in TNotification> where TNotification : Switchboard.INotification
+    public System.Threading.Tasks.Task Handle(TNotification notification, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IPipelineBehavior<in TRequest, TResponse>
+    public System.Threading.Tasks.Task<TResponse> Handle(TRequest request, Switchboard.RequestHandlerDelegate<TResponse> next, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IPublisher
+    public System.Threading.Tasks.Task Publish(object notification, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task Publish<TNotification>(TNotification notification, System.Threading.CancellationToken cancellationToken = default) where TNotification : Switchboard.INotification
+
+public interface Switchboard.IRequest : Switchboard.IBaseRequest
+
+public interface Switchboard.IRequestHandler<in TRequest> where TRequest : Switchboard.IRequest
+    public System.Threading.Tasks.Task Handle(TRequest request, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IRequestHandler<in TRequest, TResponse> where TRequest : Switchboard.IRequest<TResponse>
+    public System.Threading.Tasks.Task<TResponse> Handle(TRequest request, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IRequest<out TResponse> : Switchboard.IBaseRequest
+
+public interface Switchboard.ISender
+    public System.Collections.Generic.IAsyncEnumerable<TResponse> CreateStream<TResponse>(Switchboard.IStreamRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Collections.Generic.IAsyncEnumerable<object?> CreateStream(object request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task Send<TRequest>(TRequest request, System.Threading.CancellationToken cancellationToken = default) where TRequest : Switchboard.IRequest
+    public System.Threading.Tasks.Task<TResponse> Send<TResponse>(Switchboard.IRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task<object?> Send(object request, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Switchboard.IStreamPipelineBehavior<in TRequest, TResponse>
+    public System.Collections.Generic.IAsyncEnumerable<TResponse> Handle(TRequest request, Switchboard.StreamHandlerDelegate<TResponse> next, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IStreamRequestHandler<in TRequest, out TResponse> where TRequest : Switchboard.IStreamRequest<TResponse>
+    public System.Collections.Generic.IAsyncEnumerable<TResponse> Handle(TRequest request, System.Threading.CancellationToken cancellationToken)
+
+public interface Switchboard.IStreamRequest<out TResponse>
+
+public sealed class Switchboard.Mediator : Switchboard.IMediator, Switchboard.IPublisher, Switchboard.ISender
+    public Mediator(System.IServiceProvider provider)
+    public System.Collections.Generic.IAsyncEnumerable<TResponse> CreateStream<TResponse>(Switchboard.IStreamRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Collections.Generic.IAsyncEnumerable<object?> CreateStream(object request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task Publish(object notification, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task Publish<TNotification>(TNotification notification, System.Threading.CancellationToken cancellationToken = default) where TNotification : Switchboard.INotification
+    public System.Threading.Tasks.Task Send<TRequest>(TRequest request, System.Threading.CancellationToken cancellationToken = default) where TRequest : Switchboard.IRequest
+    public System.Threading.Tasks.Task<TResponse> Send<TResponse>(Switchboard.IRequest<TResponse> request, System.Threading.CancellationToken cancellationToken = default)
+    public System.Threading.Tasks.Task<object?> Send(object request, System.Threading.CancellationToken cancellationToken = default)
+
+public delegate System.Threading.Tasks.Task<TResponse> Switchboard.RequestHandlerDelegate<TResponse>(System.Threading.CancellationToken cancellationToken = default)
+
+public delegate System.Collections.Generic.IAsyncEnumerable<TResponse> Switchboard.StreamHandlerDelegate<out TResponse>()
+
+public sealed class Switchboard.SwitchboardConfiguration
+    public SwitchboardConfiguration()
+    public Switchboard.SwitchboardConfiguration AddBehavior(System.Type behaviorType)
+    public Switchboard.SwitchboardConfiguration AddBehavior<TBehavior>()
+    public Switchboard.SwitchboardConfiguration AddOpenBehavior(System.Type openBehaviorType)
+    public Switchboard.SwitchboardConfiguration AddOpenStreamBehavior(System.Type openBehaviorType)
+    public Switchboard.SwitchboardConfiguration AddStreamBehavior(System.Type behaviorType)
+    public Switchboard.SwitchboardConfiguration AddStreamBehavior<TBehavior>()
+    public Switchboard.SwitchboardConfiguration RegisterServicesFromAssembly(System.Reflection.Assembly assembly)
+    public Switchboard.SwitchboardConfiguration RegisterServicesFromAssemblyContaining(System.Type type)
+    public Switchboard.SwitchboardConfiguration RegisterServicesFromAssemblyContaining<T>()
+    public Switchboard.SwitchboardConfiguration UseScopePerDispatch()
+    public Switchboard.SwitchboardConfiguration UseScopePerDispatch(System.Action<Switchboard.DispatchScope> onScopeCreated)
+    public Switchboard.SwitchboardConfiguration UseScopePerDispatch(System.Func<Switchboard.DispatchScope, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask> onScopeCreated)
+
+public static class Switchboard.SwitchboardServiceCollectionExtensions
+    public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddSwitchboard(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<Switchboard.SwitchboardConfiguration> configure)
+
+public static class Switchboard.SwitchboardTelemetry
+    public const string ActivitySourceName = "Switchboard"
+    public const string MeterName = "Switchboard"
+    public const string NotificationDurationInstrument = "switchboard.notification.duration"
+    public const string RequestDurationInstrument = "switchboard.request.duration"
+    public const string StreamDurationInstrument = "switchboard.stream.duration"
+
+public sealed class Switchboard.SwitchboardValidationException : System.InvalidOperationException
+    public System.Collections.Generic.IReadOnlyList<string> Errors { get; }
+
+public static class Switchboard.SwitchboardValidationExtensions
+    public static Microsoft.Extensions.DependencyInjection.IServiceCollection ValidateSwitchboard(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<Switchboard.SwitchboardValidationOptions>? configure = null)
+
+public sealed class Switchboard.SwitchboardValidationOptions
+    public SwitchboardValidationOptions()
+    public bool ForbidBehaviorsThatSkipVoidRequests { get; set; }
+    public bool ForbidDuplicateHandlers { get; set; }
+    public bool RequireHandlerForEveryRequest { get; set; }
+
+public readonly struct Switchboard.Unit : System.IComparable, System.IComparable<Switchboard.Unit>, System.IEquatable<Switchboard.Unit>
+    public static readonly Switchboard.Unit Value
+    public static System.Threading.Tasks.Task<Switchboard.Unit> Task { get; }
+    public int CompareTo(Switchboard.Unit other)
+    public bool Equals(Switchboard.Unit other)
+    public override bool Equals(object? obj)
+    public override int GetHashCode()
+    public override string ToString()
+    public static bool operator ==(Switchboard.Unit left, Switchboard.Unit right)
+    public static bool operator !=(Switchboard.Unit left, Switchboard.Unit right)

@@ -17,3 +17,6 @@ src/notes.txt
 
 # Stryker.NET mutation-testing output
 StrykerOutput/
+
+# Public API snapshot written by PublicApiTests on a mismatch
+PublicApi.received.txt
