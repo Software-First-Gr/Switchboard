@@ -20,7 +20,7 @@ Switchboard implements the request/response, notification, streaming, and pipeli
 dotnet add package SoftwareFirst.Switchboard
 ```
 
-Targets `net8.0`, `net9.0` and `net10.0`, so you can move off MediatR without moving frameworks first. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
+Targets `net8.0`, `net9.0`, `net10.0` and `net11.0`, so you can move off MediatR without moving frameworks first. On .NET 11 you get a build compiled with [runtime-native async](#net-11): no async state machines in the dispatch path, and live stack traces that show your handler and behaviors directly. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
 
 ## Beyond MediatR
 
@@ -292,6 +292,27 @@ A failure sets the span status to `Error`, adds `error.type` and an `exception` 
 | `switchboard.notification.duration` | s | `switchboard.notification`, `error.type` on failure |
 
 Tag values are type names (`GetOrder`, `Envelope<Invoice>`), never request contents, so cardinality stays bounded and no personal data leaks into your telemetry.
+
+**Rule-based tracing on .NET 11.** The `AddTracing` rules in Microsoft.Extensions.Diagnostics 11 switch Switchboard's spans on and off without a hand-written `ActivityListener`, down to one operation, and can be read from configuration:
+
+```csharp
+builder.Services.AddTracing(tracing =>
+{
+    tracing.EnableTracing(SwitchboardTelemetry.ActivitySourceName);
+    tracing.DisableTracing(SwitchboardTelemetry.ActivitySourceName, operationName: "Handle OrderPlaced");
+});
+```
+
+Span names are the operation names, so `Send GetOrder`, `Publish OrderPlaced` or `Handle OrderPlaced` each select exactly one kind of span.
+
+## .NET 11
+
+The `net11.0` build is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries themselves are. The runtime suspends and resumes `Send`, `Publish`, the scope-per-dispatch wrapper and the telemetry wrappers itself, instead of a compiler-generated state machine for each, so:
+
+- **Live stack traces are readable.** A profiler, the debugger's call stack or `new StackTrace()` taken in a handler shows the handler, your behaviors and the mediator frames, with no `AsyncMethodBuilderCore.Start` / `MoveNext` frames in between. (Exception stack traces were already clean.)
+- **Less code and less work per dispatch.** No state-machine type per async method (the `net11.0` assembly is about 8% smaller), and .NET 11 skips the `ExecutionContext` restore on continuations that have nothing to restore.
+
+Nothing changes in behavior: the scope-per-dispatch `AsyncLocal`, cancellation, the order of behaviors and every allocation guarantee are covered by the same test suite on `net8.0` through `net11.0`. Runtime async is still labeled a preview feature in .NET 11; if you build Switchboard from source and need to turn it off, pass `-p:UseRuntimeAsync=false`.
 
 ## Scope per dispatch (Blazor Server)
 
