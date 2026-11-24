@@ -8,13 +8,44 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(UseRuntimeAsync)' != 'false'">
+  <!--
+    Two independent switches, both global properties so a single command line sets them:
+      UseRuntimeAsync=true   builds Switchboard (the library) with runtime async (the shipped default is state machines).
+      AppRuntimeAsync=true   builds this project (the "application": its handlers and behaviors) with runtime async too.
+    The three variants the study compares are StateMachines (false/false), LibraryRA (true/false) and AllRA (true/true).
+  -->
+  <PropertyGroup Condition="'$(AppRuntimeAsync)' == 'true'">
+    <Features>$(Features);runtime-async=on</Features>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <_ExpectLibraryRuntimeAsync>false</_ExpectLibraryRuntimeAsync>
+    <_ExpectLibraryRuntimeAsync Condition="'$(UseRuntimeAsync)' == 'true'">true</_ExpectLibraryRuntimeAsync>
+    <_ExpectAppRuntimeAsync>false</_ExpectAppRuntimeAsync>
+    <_ExpectAppRuntimeAsync Condition="'$(AppRuntimeAsync)' == 'true'">true</_ExpectAppRuntimeAsync>
+  </PropertyGroup>
+
+  <!-- Kept for the original in-process experiments (RequestDispatchBenchmarks, NotificationFanOutBenchmarks). -->
+  <PropertyGroup Condition="'$(UseRuntimeAsync)' == 'true'">
     <DefineConstants>$(DefineConstants);SWITCHBOARD_EXPECT_RUNTIME_ASYNC</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ExpectLibraryRuntimeAsync</_Parameter1>
+      <_Parameter2>$(_ExpectLibraryRuntimeAsync)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ExpectAppRuntimeAsync</_Parameter1>
+      <_Parameter2>$(_ExpectAppRuntimeAsync)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0" />
+    <PackageReference Include="Npgsql" Version="11.0.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.17.0" />
   </ItemGroup>
 
   <ItemGroup>

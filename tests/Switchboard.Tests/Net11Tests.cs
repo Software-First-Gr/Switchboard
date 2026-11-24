@@ -12,53 +12,23 @@ using Xunit;
 
 namespace Switchboard.Tests;
 
-public sealed record StackProbe : IRequest<StackTrace>;
-
-public sealed class StackProbeHandler : IRequestHandler<StackProbe, StackTrace>
-{
-    // Captured before the handler's first await, so the frames below it are the dispatch path as it runs.
-    public Task<StackTrace> Handle(StackProbe request, CancellationToken cancellationToken) => Task.FromResult(new StackTrace());
-}
-
 /// <summary>
-/// Switchboard is compiled with runtime-native async (see Switchboard.csproj). These fail if the switch silently drops
-/// off, for example when the project file is edited or the build is run with UseRuntimeAsync=false.
+/// Switchboard ships with compiler-generated async state machines: runtime-native async measured no faster and allocated
+/// more (tools/README.md, "Runtime-async study"). This fails if it is switched back on by accident.
 /// </summary>
 public sealed class RuntimeAsyncTests
 {
-
     [Theory]
     [InlineData(typeof(Mediator), "DispatchInNewScope")]
     [InlineData(typeof(Mediator), "SendCovariant")]
     [InlineData(typeof(SwitchboardTelemetry), "Observe")]
     [InlineData(typeof(NotificationHandlerWrapperImpl<>), "Run")]
-    public void Async_methods_use_runtime_async(Type type, string method)
+    public void Async_methods_are_compiled_to_state_machines(Type type, string method)
     {
         var info = type.GetMethod(method, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
 
-        // The compiler marks the methods it rewrites into a state machine; runtime-async methods are left as written.
-        Assert.False(info.IsDefined(typeof(AsyncStateMachineAttribute)));
-    }
-
-    [Fact]
-    public async Task Live_stack_traces_show_the_dispatch_path_without_state_machine_frames()
-    {
-        await using var provider = new ServiceCollection()
-            .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<RuntimeAsyncTests>().UseScopePerDispatch())
-            .BuildServiceProvider();
-
-        var trace = await provider.GetRequiredService<ISender>().Send(new StackProbe());
-
-        var switchboardFrames = trace.GetFrames()
-            .Select(f => f.GetMethod())
-            .Where(m => m?.DeclaringType?.Assembly == typeof(Mediator).Assembly)
-            .ToList();
-
-        // The async scope-per-dispatch wrapper is on the path under its own name ...
-        Assert.Contains(switchboardFrames, m => m!.Name == "DispatchInNewScope");
-
-        // ... and not as a compiler-generated <DispatchInNewScope>d__N.MoveNext under a stub that starts it.
-        Assert.DoesNotContain(switchboardFrames, m => typeof(IAsyncStateMachine).IsAssignableFrom(m!.DeclaringType));
+        // The compiler marks the methods it rewrites into a state machine; runtime-async methods are left unmarked.
+        Assert.True(info.IsDefined(typeof(AsyncStateMachineAttribute)));
     }
 }
 

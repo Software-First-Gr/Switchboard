@@ -11,11 +11,11 @@ public sealed class RuntimeAsyncConfig : ManualConfig
 #if SWITCHBOARD_EXPECT_RUNTIME_ASYNC
         AddJob(Job.ShortRun
             .WithId("RuntimeAsync")
-            .WithToolchain(InProcessEmitToolchain.Instance));
+            .WithToolchain(InProcessEmitToolchain.From(new InProcessEmitSettings())));
 #else
         AddJob(Job.ShortRun
             .WithId("StateMachines")
-            .WithToolchain(InProcessEmitToolchain.Instance));
+            .WithToolchain(InProcessEmitToolchain.From(new InProcessEmitSettings())));
 #endif
     }
 }

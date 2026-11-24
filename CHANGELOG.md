@@ -4,9 +4,9 @@ All notable changes to Switchboard. The format follows [Keep a Changelog](https:
 
 For step-by-step upgrade instructions, see [Upgrading to 2.0](README.md#upgrading-to-20), [Upgrading to 1.3](README.md#upgrading-to-13) and [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
-## [Unreleased]
+## [2.0.0] — 2026-11-24
 
-Dropping target frameworks is a breaking change, so the next release is a major one (2.0.0). The public API itself is unchanged from 1.3.0, apart from the additions below.
+A major release because it drops target frameworks: 2.0 targets `net11.0` only. The public API is unchanged from 1.3.0, apart from the additions below.
 
 ### Added
 
@@ -18,7 +18,7 @@ Dropping target frameworks is a breaking change, so the next release is a major 
   - A `CreateStream {Request}` span, current for the handler at every step but not for the consumer between items, tagged with `switchboard.request` and the number of items yielded (`switchboard.stream.items`), and a `switchboard.stream.duration` histogram.
   - `ValidateSwitchboard()` reports stream requests with no handler and stream requests with two different handlers.
 - **.NET 11 support.** The package is built for `net11.0`.
-  - It is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries are: the async methods in the dispatch path have no compiler-generated state machines, live stack traces show handlers and behaviors without `AsyncMethodBuilderCore` frames, and the assembly is about 8% smaller. Dispatch speed is about the same as with state machines (see `tools/README.md`). `RuntimeAsyncTests` asserts it stays on.
+  - It is compiled with classic async state machines, not .NET 11's runtime-native async (a preview feature). Measured, runtime async made dispatch no faster and allocated 88–232 B more whenever a dispatch suspends. A behavior's `next()` delegate keeps it from paying off, even in apps that turn it on themselves. See [the runtime-async study](tools/README.md#runtime-async-study). `RuntimeAsyncTests` asserts the package stays on state machines.
   - Switchboard's spans work with .NET 11's rule-based tracing configuration (`services.AddTracing(t => t.EnableTracing(SwitchboardTelemetry.ActivitySourceName))`), including rules that switch off a single operation such as `Handle OrderPlaced`. See [OpenTelemetry](README.md#opentelemetry).
 
 ### Removed
@@ -34,7 +34,7 @@ Dropping target frameworks is a breaking change, so the next release is a major 
 
 ### Behavior notes
 
-- **`ISender` (and so `IMediator`) has two new members, with default implementations, so nothing breaks.** A class of your own that implements either one, such as a decorator, keeps compiling and running unchanged. Calling `CreateStream` through it throws a `NotSupportedException` naming the class, until it implements both overloads (forwarding them to the sender it wraps is enough). The release is binary- and source-compatible with 1.3.0; pack now checks that (see Changed).
+- **`ISender` (and so `IMediator`) has two new members, with default implementations, so nothing breaks.** A class of your own that implements either one, such as a decorator, keeps compiling and running unchanged. Calling `CreateStream` through it throws a `NotSupportedException` naming the class, until it implements both overloads (forwarding them to the sender it wraps is enough). Apart from the dropped target frameworks, the release is binary- and source-compatible with 1.3.0; pack checks that (see Changed).
 - **One deliberate difference from MediatR, a fix:** a stream created through a covariant base type (`IStreamRequest<object>` for a request declaring `IStreamRequest<OrderDto>`) runs the `OrderDto` handler, as `Send` does since 1.2.2. MediatR looks for a handler of `object` items, fails, and caches that lookup, so every later `CreateStream` of the request throws `InvalidCastException`.
 
 ## [1.3.0] — 2026-09-30
@@ -115,6 +115,7 @@ No breaking API changes: every 1.1 call site compiles and behaves the same, apar
 
 - Initial release: `IRequest`/`IRequest<T>`, `INotification`, `IPipelineBehavior<,>`, `ISender`/`IPublisher`/`IMediator`, untyped `Send(object)`/`Publish(object)`, and assembly scanning, all MediatR-compatible.
 
+[2.0.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Software-First-Gr/Switchboard/compare/v1.2.0...v1.2.1
