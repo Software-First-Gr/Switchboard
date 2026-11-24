@@ -7,9 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-#if NET11_0_OR_GREATER
 using Microsoft.Extensions.Diagnostics.Tracing;
-#endif
 using Xunit;
 
 namespace Switchboard.Tests;
@@ -23,33 +21,27 @@ public sealed class StackProbeHandler : IRequestHandler<StackProbe, StackTrace>
 }
 
 /// <summary>
-/// The net11.0 build is compiled with runtime-native async (see Switchboard.csproj); older builds use compiler-generated
-/// state machines. Both directions are asserted, so the switch can neither silently drop off net11.0 nor leak onto a
-/// runtime that cannot run it.
+/// Switchboard is compiled with runtime-native async (see Switchboard.csproj). These fail if the switch silently drops
+/// off, for example when the project file is edited or the build is run with UseRuntimeAsync=false.
 /// </summary>
 public sealed class RuntimeAsyncTests
 {
-#if NET11_0_OR_GREATER
-    private const bool RuntimeAsync = true;
-#else
-    private const bool RuntimeAsync = false;
-#endif
 
     [Theory]
     [InlineData(typeof(Mediator), "DispatchInNewScope")]
     [InlineData(typeof(Mediator), "SendCovariant")]
     [InlineData(typeof(SwitchboardTelemetry), "Observe")]
     [InlineData(typeof(NotificationHandlerWrapperImpl<>), "Run")]
-    public void Async_methods_use_runtime_async_on_net11_only(Type type, string method)
+    public void Async_methods_use_runtime_async(Type type, string method)
     {
         var info = type.GetMethod(method, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
 
         // The compiler marks the methods it rewrites into a state machine; runtime-async methods are left as written.
-        Assert.Equal(!RuntimeAsync, info.IsDefined(typeof(AsyncStateMachineAttribute)));
+        Assert.False(info.IsDefined(typeof(AsyncStateMachineAttribute)));
     }
 
     [Fact]
-    public async Task Live_stack_traces_show_the_dispatch_path_without_state_machine_frames_on_net11()
+    public async Task Live_stack_traces_show_the_dispatch_path_without_state_machine_frames()
     {
         await using var provider = new ServiceCollection()
             .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<RuntimeAsyncTests>().UseScopePerDispatch())
@@ -62,16 +54,14 @@ public sealed class RuntimeAsyncTests
             .Where(m => m?.DeclaringType?.Assembly == typeof(Mediator).Assembly)
             .ToList();
 
-        // The async scope-per-dispatch wrapper is on the path either way ...
+        // The async scope-per-dispatch wrapper is on the path under its own name ...
         Assert.Contains(switchboardFrames, m => m!.Name == "DispatchInNewScope");
 
-        // ... but only without runtime async does its body run in a compiler-generated <DispatchInNewScope>d__N.MoveNext,
-        // under the stub that starts it.
-        Assert.Equal(!RuntimeAsync, switchboardFrames.Any(m => typeof(IAsyncStateMachine).IsAssignableFrom(m!.DeclaringType)));
+        // ... and not as a compiler-generated <DispatchInNewScope>d__N.MoveNext under a stub that starts it.
+        Assert.DoesNotContain(switchboardFrames, m => typeof(IAsyncStateMachine).IsAssignableFrom(m!.DeclaringType));
     }
 }
 
-#if NET11_0_OR_GREATER
 /// <summary>
 /// .NET 11's rule-based tracing configuration (<c>services.AddTracing</c> in Microsoft.Extensions.Diagnostics) switches
 /// Switchboard's spans on and off by source and operation name, with no hand-written <see cref="ActivityListener"/>.
@@ -144,4 +134,3 @@ internal static class TracingRules
     public static Task StartAsync(IServiceProvider provider)
         => provider.GetRequiredService<Microsoft.Extensions.Options.IAsyncStartupValidator>().ValidateAsync();
 }
-#endif

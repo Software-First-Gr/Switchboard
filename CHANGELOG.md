@@ -2,11 +2,11 @@
 
 All notable changes to Switchboard. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
-For step-by-step upgrade instructions, see [Upgrading to 1.3](README.md#upgrading-to-13) and [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
+For step-by-step upgrade instructions, see [Upgrading to 2.0](README.md#upgrading-to-20), [Upgrading to 1.3](README.md#upgrading-to-13) and [Upgrading to 1.2](README.md#upgrading-to-12) in the README.
 
 ## [Unreleased]
 
-New API, so the next release is a minor one (1.4.0).
+Dropping target frameworks is a breaking change, so the next release is a major one (2.0.0). The public API itself is unchanged from 1.3.0, apart from the additions below.
 
 ### Added
 
@@ -17,13 +17,19 @@ New API, so the next release is a minor one (1.4.0).
   - With `UseScopePerDispatch`, each enumeration gets its own scope, disposed when the stream ends, throws or is abandoned. The handler's own `Send` and `CreateStream` calls join it, after a `yield` as well as before.
   - A `CreateStream {Request}` span, current for the handler at every step but not for the consumer between items, tagged with `switchboard.request` and the number of items yielded (`switchboard.stream.items`), and a `switchboard.stream.duration` histogram.
   - `ValidateSwitchboard()` reports stream requests with no handler and stream requests with two different handlers.
-- **.NET 11 support.** The package adds a `net11.0` build, against Microsoft.Extensions.DependencyInjection.Abstractions 11.0.0 (floored, like the other targets), next to `net8.0`, `net9.0` and `net10.0`.
-  - It is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries are: the async methods in the dispatch path have no compiler-generated state machines, live stack traces show handlers and behaviors without `AsyncMethodBuilderCore` frames, and the assembly is about 8% smaller. Behavior is unchanged; the whole suite runs on all four targets, and `RuntimeAsyncTests` asserts runtime async is on for `net11.0` only.
+- **.NET 11 support.** The package is built for `net11.0`.
+  - It is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries are: the async methods in the dispatch path have no compiler-generated state machines, live stack traces show handlers and behaviors without `AsyncMethodBuilderCore` frames, and the assembly is about 8% smaller. Dispatch speed is about the same as with state machines (see `tools/README.md`). `RuntimeAsyncTests` asserts it stays on.
   - Switchboard's spans work with .NET 11's rule-based tracing configuration (`services.AddTracing(t => t.EnableTracing(SwitchboardTelemetry.ActivitySourceName))`), including rules that switch off a single operation such as `Handle OrderPlaced`. See [OpenTelemetry](README.md#opentelemetry).
+
+### Removed
+
+- **The `net8.0`, `net9.0` and `net10.0` builds.** Switchboard now targets only the latest .NET, `net11.0`, and will move to each new .NET as it ships. Apps on .NET 8, 9 or 10 keep using 1.x; NuGet will not install 2.0 into them. See [Upgrading to 2.0](README.md#upgrading-to-20).
+- **The package dependency.** .NET 11 ships `Microsoft.Extensions.DependencyInjection.Abstractions` in the shared framework, so the package references nothing.
 
 ### Changed
 
-- **Building from source needs the .NET 11 SDK** (`global.json` pins 11.0.100 or a later feature band). CI installs the .NET 8, 9, 10 and 11 runtimes and runs the tests on each.
+- **Building from source needs the .NET 11 SDK** (`global.json` pins 11.0.100 or a later feature band). CI installs the .NET 11 SDK only.
+- Pack validation against 1.3.0 still checks every API; the dropped target frameworks are the only accepted differences (`CompatibilitySuppressions.xml`).
 - **Breaking changes now fail the build.** `dotnet pack` validates the package against the published 1.3.0 (`PackageValidationBaselineVersion`), parameter renames included, and a public API snapshot test (`PublicApi.approved.txt`) fails on any change to the public surface until it is accepted with `SWITCHBOARD_ACCEPT_API=1 dotnet test`.
 
 ### Behavior notes

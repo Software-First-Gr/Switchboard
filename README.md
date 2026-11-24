@@ -8,11 +8,13 @@
 
 📖 Overview, migration guide and FAQ: **[softwarefirst.gr/switchboard](https://softwarefirst.gr/switchboard)**
 
+> **2.0 targets only the latest .NET (`net11.0`).** Each release now follows the current .NET; to take a new Switchboard version, move your app to that .NET first. Staying on .NET 8, 9 or 10? Keep using 1.x — see **[Upgrading to 2.0](#upgrading-to-20)**.
+
 > **New in 1.3:** the handler is resolved inside the pipeline, as in MediatR, so behaviors run before it is constructed and see it fail when it can't be — see **[Upgrading to 1.3](#upgrading-to-13)**.
 >
 > **New in 1.2:** startup validation, built-in OpenTelemetry, scope per dispatch for Blazor Server, and a fix for handlers registered twice. It's a drop-in upgrade from 1.1 — see **[Upgrading to 1.2](#upgrading-to-12)** and the [changelog](CHANGELOG.md).
 
-Switchboard implements the request/response, notification, streaming, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 700 lines of code with a single dependency (`Microsoft.Extensions.DependencyInjection.Abstractions`). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
+Switchboard implements the request/response, notification, streaming, and pipeline-behavior surface of MediatR on top of `Microsoft.Extensions.DependencyInjection`, in under 700 lines of code with no package dependencies (the `Microsoft.Extensions.DependencyInjection` abstractions ship with .NET 11 itself). It was extracted from a production system that moved off MediatR when it became commercially licensed: swap your `using` directives, change one registration call, and your handlers, behaviors, and call sites compile unchanged.
 
 ## Install
 
@@ -20,7 +22,7 @@ Switchboard implements the request/response, notification, streaming, and pipeli
 dotnet add package SoftwareFirst.Switchboard
 ```
 
-Targets `net8.0`, `net9.0`, `net10.0` and `net11.0`, so you can move off MediatR without moving frameworks first. On .NET 11 you get a build compiled with [runtime-native async](#net-11): no async state machines in the dispatch path, and live stack traces that show your handler and behaviors directly. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
+Targets the latest .NET only — currently `net11.0` — and moves to each new .NET when it ships. Apps on .NET 8, 9 or 10 can stay on the 1.x releases. The build is compiled with [runtime-native async](#net-11): no async state machines in the dispatch path, and live stack traces that show your handler and behaviors directly. The package ID is prefixed, but the assembly and namespace are both plain `Switchboard` — you write `using Switchboard;`.
 
 ## Beyond MediatR
 
@@ -40,7 +42,7 @@ It also fixes a trap common to hand-rolled registration: calling `AddSwitchboard
 Several MediatR alternatives exist now, and most compete on speed or feature count. Switchboard competes on being small and safe:
 
 - **Under 700 lines of code**, across files you can read end to end in one sitting.
-- **One dependency** — `Microsoft.Extensions.DependencyInjection.Abstractions`, floored at the latest tested servicing patch for each target major (currently `8.0.2`, `9.0.23`, `10.0.15` and `11.0.0`). Apps pinned below the matching minimum may be upgraded to it. Telemetry uses `ActivitySource` and `Meter` from the base class library.
+- **No dependencies** — on .NET 11, `Microsoft.Extensions.DependencyInjection.Abstractions` is part of the shared framework, so the package references nothing and never moves your app onto a newer `Microsoft.Extensions.*` version. Telemetry uses `ActivitySource` and `Meter` from the base class library.
 - **No source generators, analyzers, or build-time magic.** Plain reflection over the DI container, the way MediatR does it.
 - **A deliberately identical API surface** — the migration is a find-and-replace, not a rewrite.
 - **Apache 2.0**, extracted from a production system that made this exact switch.
@@ -307,12 +309,12 @@ Span names are the operation names, so `Send GetOrder`, `Publish OrderPlaced` or
 
 ## .NET 11
 
-The `net11.0` build is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries themselves are. The runtime suspends and resumes `Send`, `Publish`, the scope-per-dispatch wrapper and the telemetry wrappers itself, instead of a compiler-generated state machine for each, so:
+Switchboard is compiled with runtime-native async (`runtime-async=on`), as the .NET 11 libraries themselves are. The runtime suspends and resumes `Send`, `Publish`, the scope-per-dispatch wrapper and the telemetry wrappers itself, instead of a compiler-generated state machine for each, so:
 
 - **Live stack traces are readable.** A profiler, the debugger's call stack or `new StackTrace()` taken in a handler shows the handler, your behaviors and the mediator frames, with no `AsyncMethodBuilderCore.Start` / `MoveNext` frames in between. (Exception stack traces were already clean.)
-- **Less code and less work per dispatch.** No state-machine type per async method (the `net11.0` assembly is about 8% smaller), and .NET 11 skips the `ExecutionContext` restore on continuations that have nothing to restore.
+- **Less code.** No state-machine type per async method, so the assembly is about 8% smaller. Dispatch speed is about the same either way; see the [performance experiments](tools/README.md).
 
-Nothing changes in behavior: the scope-per-dispatch `AsyncLocal`, cancellation, the order of behaviors and every allocation guarantee are covered by the same test suite on `net8.0` through `net11.0`. Runtime async is still labeled a preview feature in .NET 11; if you build Switchboard from source and need to turn it off, pass `-p:UseRuntimeAsync=false`.
+Nothing changes in behavior: the scope-per-dispatch `AsyncLocal`, cancellation, the order of behaviors and every allocation guarantee are covered by the test suite, which ran on `net8.0` through `net11.0` before the older targets were dropped. Runtime async is still labeled a preview feature in .NET 11; if you build Switchboard from source and need to turn it off, pass `-p:UseRuntimeAsync=false`.
 
 ## Scope per dispatch (Blazor Server)
 
@@ -346,6 +348,15 @@ services.AddSwitchboard(cfg => cfg
 `scope.Parent` is the caller's scope, `scope.ServiceProvider` the new one, and `scope.Message` the request or notification. A synchronous overload, `UseScopePerDispatch(scope => ...)`, is there too.
 
 > Work that outlives the dispatch — `Task.Run` fire-and-forget started inside a handler — must not send through the mediator it inherited: the scope it would reuse is disposed when the outer dispatch completes. Create a scope of your own for background work.
+
+## Upgrading to 2.0
+
+2.0 changes no API. It drops the `net8.0`, `net9.0` and `net10.0` builds and targets `net11.0` only.
+
+- **Your app is on .NET 11:** bump the package. Nothing else changes, and the package no longer brings in `Microsoft.Extensions.DependencyInjection.Abstractions` (it comes with the framework).
+- **Your app is on .NET 8, 9 or 10:** stay on the latest 1.x until you move to .NET 11. NuGet refuses to install 2.0 into a project that targets an older framework, so nothing breaks by accident.
+
+From 2.0 on, Switchboard follows the current .NET: when the next .NET ships, the release after it targets that version only, and the release notes say so.
 
 ## Upgrading to 1.3
 

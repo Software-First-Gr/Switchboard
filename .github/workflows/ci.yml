@@ -14,16 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # All four runtimes are installed so the test suite executes on every
-      # target framework, not just the newest one.
+      # Switchboard targets the latest .NET only.
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-            11.0.x
+          dotnet-version: 11.0.x
 
       - name: Restore
         run: dotnet restore
@@ -61,11 +56,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-            11.0.x
+          dotnet-version: 11.0.x
 
       - name: Pack (version from tag)
         run: dotnet pack src/Switchboard/Switchboard.csproj --configuration Release --output artifacts -p:Version=${GITHUB_REF_NAME#v} -p:ContinuousIntegrationBuild=true
