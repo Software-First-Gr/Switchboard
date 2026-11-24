@@ -466,6 +466,10 @@ services.AddSwitchboard(cfg => cfg.UseScopePerDispatch(async (scope, cancellatio
 - **Publishing to zero handlers** is a no-op, mirroring MediatR.
 - Handler-type wrappers are cached statically per request type; the cache is stateless and thread-safe.
 
+## Performance experiments
+
+Reproducible, non-shipping BenchmarkDotNet experiments live in [`tools/`](tools/README.md). They measure completed and suspended typed dispatch, scope-per-dispatch overhead, .NET 11 runtime-native async, and an array fast-path prototype for sequential notification fan-out. The notification numbers are loop-level only; use them to guide further investigation, not as end-to-end `Publish` claims.
+
 ## License
 
 [Apache 2.0](LICENSE)

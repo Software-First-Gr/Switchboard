@@ -18,5 +18,8 @@ src/notes.txt
 # Stryker.NET mutation-testing output
 StrykerOutput/
 
+# BenchmarkDotNet output
+BenchmarkDotNet.Artifacts/
+
 # Public API snapshot written by PublicApiTests on a mismatch
 PublicApi.received.txt
