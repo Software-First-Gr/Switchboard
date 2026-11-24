@@ -23,3 +23,6 @@ BenchmarkDotNet.Artifacts/
 
 # Public API snapshot written by PublicApiTests on a mismatch
 PublicApi.received.txt
+
+# Runtime-async study builds and results
+tools/.study/
