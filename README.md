@@ -40,7 +40,7 @@ It also fixes a trap common to hand-rolled registration: calling `AddSwitchboard
 Several MediatR alternatives exist now, and most compete on speed or feature count. Switchboard competes on being small and safe:
 
 - **Under 700 lines of code**, across files you can read end to end in one sitting.
-- **One dependency** — `Microsoft.Extensions.DependencyInjection.Abstractions`, floored at the lowest patch of each major so it never drags your other `Microsoft.Extensions.*` packages forward. Telemetry uses `ActivitySource` and `Meter` from the base class library.
+- **One dependency** — `Microsoft.Extensions.DependencyInjection.Abstractions`, floored at the latest tested servicing patch for each target major (currently `8.0.2`, `9.0.23`, `10.0.15` and `11.0.0`). Apps pinned below the matching minimum may be upgraded to it. Telemetry uses `ActivitySource` and `Meter` from the base class library.
 - **No source generators, analyzers, or build-time magic.** Plain reflection over the DI container, the way MediatR does it.
 - **A deliberately identical API surface** — the migration is a find-and-replace, not a rewrite.
 - **Apache 2.0**, extracted from a production system that made this exact switch.

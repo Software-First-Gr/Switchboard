@@ -38,6 +38,24 @@ public sealed class RegistrationTests
     }
 
     [Fact]
+    public void Mediator_aliases_resolve_in_multiple_scopes_with_scope_validation_enabled()
+    {
+        using var provider = new ServiceCollection()
+            .AddSingleton<Recorder>()
+            .AddSwitchboard(cfg => cfg.RegisterServicesFromAssemblyContaining<RegistrationTests>())
+            .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var firstScope = provider.CreateScope();
+        using var secondScope = provider.CreateScope();
+
+        Assert.IsType<Mediator>(firstScope.ServiceProvider.GetRequiredService<IMediator>());
+        Assert.IsType<Mediator>(firstScope.ServiceProvider.GetRequiredService<ISender>());
+        Assert.IsType<Mediator>(firstScope.ServiceProvider.GetRequiredService<IPublisher>());
+        Assert.IsType<Mediator>(secondScope.ServiceProvider.GetRequiredService<IMediator>());
+        Assert.IsType<Mediator>(secondScope.ServiceProvider.GetRequiredService<ISender>());
+        Assert.IsType<Mediator>(secondScope.ServiceProvider.GetRequiredService<IPublisher>());
+    }
+
+    [Fact]
     public void Scanning_registers_concrete_handlers_and_skips_abstract_and_open_generic_types()
     {
         using var provider = BuildProvider();
